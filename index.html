@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Majan Technology — Revenue Command</title>
+<script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07090f;--surface:#0d1018;--card:#111520;--card2:#161b2a;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --gold:#C8A84B;--gold-dim:rgba(200,168,75,0.12);--gold-border:rgba(200,168,75,0.28);
+  --text:#E6E8F0;--muted:rgba(230,232,240,0.5);--dim:rgba(230,232,240,0.25);
+  --green:#3DD68C;--red:#F05252;--blue:#4B9CF5;--purple:#8B5CF6;
+  --orange:#F59E0B;--teal:#14B8A6;--pink:#EC4899;
+}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+input,select,textarea,button{font-family:'DM Sans',sans-serif}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+
+/* LAYOUT */
+#app{display:flex;min-height:100vh}
+#sidebar{width:230px;background:rgba(255,255,255,0.02);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:fixed;top:0;left:0;height:100vh;z-index:100;overflow-y:auto}
+#main{flex:1;margin-left:230px;padding:24px 28px;overflow-y:auto;min-height:100vh}
+
+/* SIDEBAR */
+.sb-logo{padding:20px 18px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-user{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.sb-nav{flex:1;padding:8px 0}
+.sb-section{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.14em;padding:12px 18px 4px;font-family:'DM Mono',monospace}
+.nav-btn{width:100%;padding:9px 18px;display:flex;align-items:center;gap:9px;background:transparent;border:none;border-left:3px solid transparent;color:var(--muted);cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;font-weight:400;transition:all .15s;text-align:left}
+.nav-btn:hover{background:rgba(255,255,255,0.03);color:var(--text)}
+.nav-btn.active{background:rgba(200,168,75,0.1);border-left-color:var(--gold);color:var(--gold);font-weight:600}
+.nav-icon{width:16px;height:16px;flex-shrink:0}
+.nav-badge{margin-left:auto;border-radius:20px;padding:1px 6px;font-size:9px;font-family:'DM Mono',monospace}
+.sb-footer{padding:10px 18px;border-top:1px solid var(--border);flex-shrink:0}
+
+/* CARDS */
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px}
+.card-flush{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.g21{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:16px}
+.g31{display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:16px}
+
+/* STAT CARD */
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;position:relative;overflow:hidden;transition:border .2s}
+.kpi:hover{border-color:var(--border2)}
+.kpi-glow{position:absolute;top:-20px;right:-20px;width:80px;height:80px;border-radius:50%;opacity:.15}
+.kpi-label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;font-family:'DM Mono',monospace;margin-bottom:8px}
+.kpi-value{font-size:26px;font-weight:700;font-family:'Playfair Display',serif;line-height:1}
+.kpi-sub{font-size:11px;color:var(--dim);margin-top:4px}
+.kpi-delta{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:2px 6px;border-radius:10px;margin-top:5px}
+
+/* SECTION TITLE */
+.stitle{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.12em;font-family:'DM Mono',monospace;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+
+/* FORMS */
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.f{margin-bottom:13px}
+.f.full{grid-column:span 2}
+.f label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.09em;display:block;margin-bottom:4px;font-family:'DM Mono',monospace}
+.fi{background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:9px;padding:9px 13px;color:var(--text);font-size:13px;width:100%;outline:none;transition:border .2s}
+.fi:focus{border-color:var(--gold-border)}
+select.fi option{background:#1a1f2e}
+textarea.fi{resize:vertical}
+
+/* BUTTONS */
+.btn{border:none;border-radius:9px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:5px;transition:all .2s;font-size:13px;padding:9px 16px}
+.btn-p{background:linear-gradient(135deg,var(--gold),#9a7520);color:#07090f}
+.btn-p:hover{opacity:.9;transform:translateY(-1px);box-shadow:0 4px 16px rgba(200,168,75,.3)}
+.btn-g{background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--border)}
+.btn-g:hover{background:rgba(255,255,255,0.1);color:var(--text)}
+.btn-d{background:rgba(240,82,82,0.1);color:var(--red);border:1px solid rgba(240,82,82,.25)}
+.btn-s{font-size:11px;padding:5px 10px;border-radius:7px}
+.btn-ms{background:#fff;color:#1a1a1a;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;cursor:pointer;border:none;transition:all .2s;width:100%;justify-content:center}
+.btn-ms:hover{background:#f5f5f5;transform:translateY(-1px)}
+
+/* MODAL */
+.mo{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.85);backdrop-filter:blur(8px);padding:16px}
+.mo-box{background:var(--surface);border:1px solid var(--border2);border-radius:18px;padding:26px;width:min(700px,96vw);max-height:92vh;overflow-y:auto;position:relative}
+.mo-box.wide{width:min(820px,96vw)}
+.mo-box.narrow{width:min(460px,96vw)}
+.mo-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.mo-title{font-size:17px;font-weight:700;font-family:'Playfair Display',serif}
+.mo-close{background:rgba(255,255,255,0.07);border:none;border-radius:7px;width:30px;height:30px;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center}
+
+/* TABLE */
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{padding:9px 11px;text-align:left;color:var(--dim);font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap;font-weight:500}
+.tbl td{padding:8px 11px;border-bottom:1px solid rgba(255,255,255,0.035)}
+.tbl tr:hover td{background:rgba(255,255,255,0.02)}
+.tbl tr:last-child td{border-bottom:none}
+
+/* BADGES */
+.badge{font-size:10px;padding:3px 8px;border-radius:20px;white-space:nowrap;font-family:'DM Mono',monospace;font-weight:500}
+.mbar{width:100%;background:rgba(255,255,255,0.06);border-radius:3px;height:4px}
+.mbar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+
+/* AVATAR */
+.av{border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-family:'DM Mono',monospace}
+
+/* STARS */
+.stars{display:flex;gap:2px;color:var(--gold)}
+
+/* PAGE HEADER */
+.ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}
+.ph-title{font-size:21px;font-weight:700;font-family:'Playfair Display',serif}
+.ph-sub{font-size:12px;color:var(--dim);margin-top:3px}
+
+/* FILTERS */
+.fbar{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.fbar input,.fbar select{background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:7px;padding:7px 11px;color:var(--text);font-size:12px;outline:none}
+
+/* PROGRESS RING */
+.pring{position:relative;display:inline-flex;align-items:center;justify-content:center}
+
+/* COMMAND CENTER SPECIFIC */
+.cmd-metric{background:linear-gradient(135deg,rgba(200,168,75,0.08),rgba(200,168,75,0.03));border:1px solid var(--gold-border);border-radius:14px;padding:18px 20px}
+.risk-item{background:rgba(240,82,82,0.06);border:1px solid rgba(240,82,82,0.2);border-radius:10px;padding:11px 14px;margin-bottom:7px}
+.opp-item{background:rgba(61,214,140,0.06);border:1px solid rgba(61,214,140,0.2);border-radius:10px;padding:11px 14px;margin-bottom:7px}
+.alert-item{background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:10px;padding:10px 14px;margin-bottom:7px}
+
+/* SCORE CIRCLE */
+.score-circle{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;font-family:'Playfair Display',serif;flex-shrink:0}
+
+/* LOGIN */
+#login-screen{min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.lg{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none}
+.lgrid{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,0.012) 1px,transparent 1px);background-size:28px 28px;pointer-events:none}
+
+/* SYNC */
+#sync-bar{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),var(--blue),var(--gold));background-size:200%;animation:sa 1.5s linear infinite;z-index:9999;display:none}
+@keyframes sa{0%{background-position:0%}100%{background-position:200%}}
+#toast{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:7px}
+.ti{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 16px;font-size:12px;color:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.4);animation:tslide .3s ease;display:flex;align-items:center;gap:7px}
+@keyframes tslide{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}
+
+/* SIMULATION */
+.sim-slider{width:100%;accent-color:var(--gold)}
+.sim-result{background:rgba(200,168,75,0.08);border:1px solid var(--gold-border);border-radius:10px;padding:14px;margin-top:10px}
+
+/* GAUGE */
+.gauge-wrap{position:relative;display:flex;flex-direction:column;align-items:center}
+</style>
+</head>
+<body>
+<div id="sync-bar"></div>
+<div id="toast"></div>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="lg" style="top:5%;left:10%;width:500px;height:500px;background:rgba(200,168,75,0.05)"></div>
+  <div class="lg" style="bottom:10%;right:5%;width:600px;height:600px;background:rgba(75,156,245,0.04)"></div>
+  <div class="lg" style="top:40%;left:40%;width:300px;height:300px;background:rgba(139,92,246,0.04)"></div>
+  <div class="lgrid"></div>
+  <div style="width:min(440px,92vw);position:relative;z-index:1">
+    <div style="text-align:center;margin-bottom:28px">
+      <div style="display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:18px;background:linear-gradient(135deg,var(--gold),#9a7520);margin-bottom:14px;box-shadow:0 10px 40px rgba(200,168,75,.35)">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#07090f" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+      </div>
+      <div style="font-size:26px;font-weight:700;font-family:'Playfair Display',serif;color:var(--text)">Majan Technology</div>
+      <div style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace;letter-spacing:.14em;margin-top:5px">REVENUE COMMAND SYSTEM</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:30px;box-shadow:0 24px 64px rgba(0,0,0,.5)">
+      <div style="font-size:15px;font-weight:600;margin-bottom:5px">Welcome back</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:22px">Sign in with your Majan Microsoft account</div>
+      <button class="btn-ms" onclick="signIn()">
+        <svg width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+        Sign in with Microsoft
+      </button>
+      <div id="login-error" style="display:none;margin-top:12px;background:rgba(240,82,82,.1);border:1px solid rgba(240,82,82,.3);border-radius:8px;padding:10px 13px;font-size:12px;color:var(--red)"></div>
+      <div style="margin-top:18px;padding:12px;background:rgba(255,255,255,.03);border-radius:9px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Access restricted to</div>
+        <div style="font-size:12px;color:var(--muted)">@MAJANTS.onmicrosoft.com · Oman</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+  <div id="sidebar">
+    <div class="sb-logo">
+      <div style="display:flex;align-items:center;gap:9px">
+        <div style="width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--gold),#9a7520);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#07090f" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;font-family:'Playfair Display',serif;line-height:1;color:var(--text)">MajanERP</div>
+          <div style="font-size:8px;color:var(--gold);font-family:'DM Mono',monospace;letter-spacing:.1em;margin-top:2px">COMMAND v2.0</div>
+        </div>
+      </div>
+    </div>
+    <div class="sb-user" id="sb-user"></div>
+    <nav class="sb-nav" id="sb-nav"></nav>
+    <div class="sb-footer">
+      <div style="font-size:9px;color:var(--dim);font-family:'DM Mono',monospace;margin-bottom:6px">STORAGE</div>
+      <div id="sync-st" style="font-size:11px;color:var(--green);display:flex;align-items:center;gap:5px;margin-bottom:10px">
+        <div style="width:5px;height:5px;border-radius:50%;background:var(--green)"></div>OneDrive Synced
+      </div>
+      <button class="btn btn-d btn-s" onclick="signOut()" style="width:100%;justify-content:center">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="v-command"  style="display:none"></div>
+    <div id="v-pipeline" style="display:none"></div>
+    <div id="v-meetings" style="display:none"></div>
+    <div id="v-accounts" style="display:none"></div>
+    <div id="v-revenue"  style="display:none"></div>
+    <div id="v-margin"   style="display:none"></div>
+    <div id="v-incentive"style="display:none"></div>
+    <div id="v-cashflow" style="display:none"></div>
+    <div id="v-sim"      style="display:none"></div>
+    <div id="v-customers"style="display:none"></div>
+    <div id="v-vendors"  style="display:none"></div>
+    <div id="v-users"    style="display:none"></div>
+  </div>
+</div>
+<div id="modal-root"></div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// CONFIG & AUTH
+// ═══════════════════════════════════════════════════
+const CLIENT_ID = "594c09a4-8fd7-44ea-8a98-7981618686db";
+const TENANT_ID = "f4585028-100a-41cc-a6e0-875e56e20c39";
+const SCOPES    = ["User.Read","Files.ReadWrite","Sites.ReadWrite.All"];
+const FILE_NAME = "MajanERP_v2.json";
+const OMR_RATE  = 0.385; // 1 USD = 0.385 OMR (fixed peg)
+
+const ROLE_MAP = {
+  "anm@majants.onmicrosoft.com":       "admin",
+  "aryantale@majants.onmicrosoft.com": "admin",
+};
+
+const msalCfg = {
+  auth:{ clientId:CLIENT_ID, authority:`https://login.microsoftonline.com/${TENANT_ID}`, redirectUri:window.location.href.split("?")[0] },
+  cache:{ cacheLocation:"sessionStorage" }
+};
+const msalApp = new msal.PublicClientApplication(msalCfg);
+
+let CU = null; // current user
+let GT = null; // graph token
+let FID= null; // file id
+let D  = {     // app data
+  meetings:[], customers:[], vendors:[], users:[],
+  deals:[], targets:[], incentive_rules:[],
+  industries:["Banking & Finance","Government","Energy & Utilities","Telecom","Healthcare","Oil & Gas","Defence","Construction","Logistics","Real Estate","Education","Aviation"],
+  gsi_partners:["Omantel","Ooredoo Oman","Bank Muscat","PDO","OIA","OPAL"],
+  version:3
+};
+
+// ═══════════════════════════════════════════════════
+// STATIC LISTS
+// ═══════════════════════════════════════════════════
+const STAGES   = ["Prospecting","Discovery","Demo","Proposal","Negotiation","Closed Won","Closed Lost"];
+const TYPES    = ["Intro Call","Discovery","Technical Demo","Commercial Review","Executive Briefing","QBR","Partner Co-sell","Follow-up","PoC Review","Contract Review"];
+const OUTCOMES = ["Next Meeting Set","Proposal Requested","Demo Requested","Budget Confirmed","Decision Pending","PoC Approved","No Interest","Deal Progressed","Contract Sent"];
+const PRIORITIES= ["High","Medium","Low"];
+const DEF_VENDORS=["CrowdStrike","Palo Alto Networks","Fortinet","Cisco","Microsoft","CyberArk","Splunk","SentinelOne","Zscaler","Tenable","Vectra AI","Darktrace","Proofpoint","Qualys"];
+const STAGE_C  = {"Prospecting":"#4B9CF5","Discovery":"#8B5CF6","Demo":"#C8A84B","Proposal":"#F59E0B","Negotiation":"#EC4899","Closed Won":"#3DD68C","Closed Lost":"rgba(255,255,255,0.18)"};
+const ROLE_C   = {admin:"#C8A84B",manager:"#8B5CF6",rep:"#4B9CF5",presales:"#14B8A6"};
+const CHART_C  = ["#C8A84B","#4B9CF5","#8B5CF6","#3DD68C","#F59E0B","#14B8A6","#EC4899","#F43F5E","#6366F1"];
+
+// ═══════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════
+const uid   = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2);
+const today = ()=>new Date().toISOString().split("T")[0];
+const ym    = (d)=>{ const x=new Date(d||today()); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`; };
+const fDate = s=>s?new Date(s).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"2-digit"}):"—";
+const fOMR  = n=>{ n=Number(n||0); if(n>=1e6)return`OMR ${(n/1e6).toFixed(2)}M`; if(n>=1e3)return`OMR ${(n/1e3).toFixed(1)}K`; return`OMR ${n.toFixed(2)}`; };
+const fUSD  = n=>{ n=Number(n||0); if(n>=1e6)return`$${(n/1e6).toFixed(1)}M`; if(n>=1e3)return`$${(n/1e3).toFixed(0)}K`; return`$${n}`; };
+const omrUsd= n=>Number(n||0)/OMR_RATE;
+const usdOmr= n=>Number(n||0)*OMR_RATE;
+const fDual = (n,primary="omr")=>primary==="omr"
+  ? `${fOMR(n)}<div style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;margin-top:1px">${fUSD(omrUsd(n))}</div>`
+  : `${fUSD(n)}<div style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;margin-top:1px">${fOMR(usdOmr(n))}</div>`;
+const pct   = (a,b)=>b?Math.round((a/b)*100):0;
+const isOD  = m=>m.nextDate&&m.nextDate<today()&&m.stage!=="Closed Won"&&m.stage!=="Closed Lost";
+const gCust = ()=>D.customers||[];
+const gVend = ()=>(D.vendors&&D.vendors.length)?D.vendors:DEF_VENDORS.map(v=>({id:v,name:v}));
+const gInd  = ()=>D.industries||[];
+const gReps = ()=>(D.users||[]).filter(u=>u.role==="rep"||u.role==="presales");
+const myMtg = ()=>CU?.role==="rep"||CU?.role==="presales" ? D.meetings.filter(m=>m.repEmail===CU.email) : D.meetings;
+
+// ═══════════════════════════════════════════════════
+// TOAST / SYNC
+// ═══════════════════════════════════════════════════
+function toast(msg,type="success"){
+  const c={success:"var(--green)",error:"var(--red)",info:"var(--blue)",warn:"var(--orange)"};
+  const el=document.createElement("div"); el.className="ti";
+  el.innerHTML=`<div style="width:7px;height:7px;border-radius:50%;background:${c[type]||c.success};flex-shrink:0"></div>${msg}`;
+  document.getElementById("toast").appendChild(el);
+  setTimeout(()=>el.remove(),3500);
+}
+const showSync=()=>document.getElementById("sync-bar").style.display="block";
+const hideSync=()=>document.getElementById("sync-bar").style.display="none";
+function setSyncSt(ok){
+  const el=document.getElementById("sync-st"); if(!el)return;
+  el.style.color=ok?"var(--green)":"var(--red)";
+  el.innerHTML=`<div style="width:5px;height:5px;border-radius:50%;background:${ok?"var(--green)":"var(--red)"}"></div>${ok?"OneDrive Synced":"Sync Error"}`;
+}
+
+// ═══════════════════════════════════════════════════
+// MSAL
+// ═══════════════════════════════════════════════════
+async function signIn(){
+  try{ await msalApp.loginRedirect({scopes:SCOPES}); }
+  catch(e){ const el=document.getElementById("login-error"); el.style.display="block"; el.textContent=e.message||"Sign in failed."; }
+}
+async function signOut(){ await msalApp.logoutRedirect(); }
+async function getToken(){
+  const accs=msalApp.getAllAccounts(); if(!accs.length)return null;
+  try{ const r=await msalApp.acquireTokenSilent({scopes:SCOPES,account:accs[0]}); return r.accessToken; }
+  catch{ await msalApp.acquireTokenRedirect({scopes:SCOPES}); }
+}
+async function initUser(acc){
+  GT=await getToken();
+  const p=await gGraph("https://graph.microsoft.com/v1.0/me");
+  const email=(p.mail||p.userPrincipalName||"").toLowerCase();
+  CU={id:acc.homeAccountId,name:p.displayName||acc.name,email,role:ROLE_MAP[email]||"rep",initials:(p.displayName||"U").split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()};
+  await loadData();
+  if(!D.users.find(u=>u.email===email)){ D.users.push({id:uid(),name:CU.name,email,role:CU.role,active:true,target_monthly:50000,target_quarterly:150000,commission_rate:3,createdAt:today()}); await saveData(); }
+  document.getElementById("login-screen").style.display="none";
+  document.getElementById("app").style.display="flex";
+  buildSidebar(); renderView("command");
+}
+
+// ═══════════════════════════════════════════════════
+// GRAPH / STORAGE
+// ═══════════════════════════════════════════════════
+async function gGraph(url,method="GET",body=null){
+  const t=GT||await getToken();
+  const o={method,headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"}};
+  if(body)o.body=JSON.stringify(body);
+  const r=await fetch(url,o); if(!r.ok&&r.status!==204)throw new Error(`Graph ${r.status}`);
+  if(r.status===204)return null; return r.json();
+}
+async function loadData(){
+  showSync();
+  try{
+    const s=await gGraph(`https://graph.microsoft.com/v1.0/me/drive/root/children?$filter=name eq '${FILE_NAME}'`);
+    if(s.value&&s.value.length){
+      FID=s.value[0].id;
+      const t=GT||await getToken();
+      const r=await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${FID}/content`,{headers:{Authorization:`Bearer ${t}`}});
+      const txt=await r.text();
+      try{
+        const parsed=JSON.parse(txt);
+        D={...D,...parsed};
+        if(!D.customers)D.customers=[];
+        if(!D.vendors)D.vendors=[];
+        if(!D.deals)D.deals=[];
+        if(!D.targets)D.targets=[];
+        if(!D.incentive_rules)D.incentive_rules=getDefaultRules();
+        if(!D.industries||!D.industries.length)D.industries=["Banking & Finance","Government","Energy & Utilities","Telecom","Healthcare","Oil & Gas","Defence","Construction","Logistics","Real Estate","Education","Aviation"];
+      }catch{D.incentive_rules=getDefaultRules();}
+    }else{
+      D.incentive_rules=getDefaultRules();
+      await saveData();
+    }
+    setSyncSt(true);
+  }catch(e){console.error(e);setSyncSt(false);toast("OneDrive offline — working locally","warn");}
+  hideSync();
+}
+async function saveData(){
+  showSync();
+  try{
+    const t=GT||await getToken();
+    const r=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${FILE_NAME}:/content`,{method:"PUT",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify(D,null,2)});
+    const data=await r.json(); if(data.id)FID=data.id;
+    setSyncSt(true);
+  }catch(e){console.error(e);setSyncSt(false);toast("Save failed","error");}
+  hideSync();
+}
+function getDefaultRules(){
+  return [
+    {id:"r1",name:"Base Commission",type:"revenue_pct",value:3,condition:"all",description:"3% on all closed deals"},
+    {id:"r2",name:"High Margin Bonus",type:"margin_bonus",value:1.5,condition:"margin_gt_30",description:"+1.5% if margin > 30%"},
+    {id:"r3",name:"Fast Close Bonus",type:"speed_bonus",value:1,condition:"close_lt_60days",description:"+1% if closed within 60 days"},
+    {id:"r4",name:"Target Achievement",type:"target_multiplier",value:1.2,condition:"above_target",description:"1.2x multiplier when above quarterly target"},
+    {id:"r5",name:"Strategic Deal",type:"strategic_bonus",value:2,condition:"strategic_flag",description:"+2% on flagged strategic deals"},
+  ];
+}
+
+// ═══════════════════════════════════════════════════
+// SIDEBAR
+// ═══════════════════════════════════════════════════
+function buildSidebar(){
+  document.getElementById("sb-user").innerHTML=`
+    <div class="av" style="width:34px;height:34px;background:linear-gradient(135deg,${ROLE_C[CU.role]||"#888"},#1a3a6e);font-size:12px;color:#fff">${CU.initials}</div>
+    <div style="min-width:0">
+      <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CU.name.split(" ")[0]}</div>
+      <div style="margin-top:2px">${rbadge(CU.role)}</div>
+    </div>`;
+
+  const isAdmin=CU.role==="admin", isMgr=CU.role==="manager", isRep=CU.role==="rep"||CU.role==="presales";
+  const oc=myMtg().filter(isOD).length;
+
+  const nav=[
+    {section:"COMMAND"},
+    {id:"command",  label:"Command Center", icon:iCmd()},
+    {id:"sim",      label:"Scenario Engine", icon:iSim()},
+    {section:"REVENUE"},
+    {id:"pipeline", label:"Pipeline",        icon:iPipe()},
+    {id:"revenue",  label:"Revenue Engine",  icon:iRev()},
+    {id:"margin",   label:"Margin Control",  icon:iMarg()},
+    {id:"cashflow", label:"Cashflow",        icon:iCash()},
+    {section:"OPERATIONS"},
+    {id:"meetings", label:"Meetings",        icon:iList(), badge:oc>0?{label:oc,color:"var(--red)"}:null},
+    {id:"incentive",label:"Incentives",      icon:iTroph()},
+    {id:"accounts", label:"Accounts",        icon:iAcct()},
+    {section:"MASTER DATA"},
+    {id:"customers",label:"Customers",       icon:iCust()},
+    {id:"vendors",  label:"Vendors",         icon:iVend()},
+    ...(isAdmin?[{id:"users",label:"Users & Roles",icon:iUsers()}]:[]),
+  ];
+
+  document.getElementById("sb-nav").innerHTML=nav.map(n=>{
+    if(n.section) return `<div class="sb-section">${n.section}</div>`;
+    return `<button class="nav-btn" id="nav-${n.id}" onclick="renderView('${n.id}')">
+      <span class="nav-icon">${n.icon}</span>${n.label}
+      ${n.badge?`<span class="nav-badge" style="background:rgba(240,82,82,.2);color:${n.badge.color}">${n.badge.label}</span>`:""}
+    </button>`;
+  }).join("");
+}
+
+function setNav(id){
+  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
+  const el=document.getElementById(`nav-${id}`); if(el)el.classList.add("active");
+}
+
+// ═══════════════════════════════════════════════════
+// VIEW ROUTER
+// ═══════════════════════════════════════════════════
+const VIEWS=["command","pipeline","meetings","accounts","revenue","margin","incentive","cashflow","sim","customers","vendors","users"];
+function renderView(id){
+  VIEWS.forEach(v=>{ const el=document.getElementById(`v-${v}`); if(el)el.style.display=v===id?"block":"none"; });
+  setNav(id);
+  const R={command:rCommand,pipeline:rPipeline,meetings:rMeetings,accounts:rAccounts,revenue:rRevenue,margin:rMargin,incentive:rIncentive,cashflow:rCashflow,sim:rSim,customers:rCustomers,vendors:rVendors,users:rUsers};
+  if(R[id])R[id]();
+}
+
+// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+// COMMAND CENTER (10/10 EXECUTIVE VIEW)
+// ═══════════════════════════════════════════════════
+function rCommand(){
+  const ms=myMtg();
+  const closed=ms.filter(m=>m.stage==="Closed Won");
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  const totalPipe=active.reduce((s,m)=>s+Number(m.value||0),0);
+  const totalWon=closed.reduce((s,m)=>s+Number(m.value||0),0);
+  const totalLost=ms.filter(m=>m.stage==="Closed Lost").reduce((s,m)=>s+Number(m.value||0),0);
+  const winRate=ms.length?pct(closed.length,ms.length):0;
+  const thisM=ym(today());
+  const mtgThisM=ms.filter(m=>ym(m.date)===thisM).length;
+  const target=getMonthTarget();
+  const targetAch=target?pct(totalWon,target):0;
+  const oc=ms.filter(isOD);
+  const avgMargin=closed.length?(closed.reduce((s,m)=>s+Number(m.margin||25),0)/closed.length).toFixed(1):0;
+  const pipelineCoverage=target?((totalPipe/target)*100).toFixed(0):0;
+
+  // Top deals at risk
+  const atRisk=active.filter(m=>m.priority==="High"||isOD(m)).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);
+  // Expansion opportunities
+  const expOpp=gCust().filter(c=>{
+    const cMtg=ms.filter(m=>m.account===c.name);
+    const score=penetrationScore(c.name);
+    return cMtg.length>0&&score<60;
+  }).slice(0,4);
+  // Vendor performance
+  const vPerf=gVend().map(v=>{
+    const vn=v.name||v;
+    const vm=closed.filter(m=>m.vendor===vn);
+    return {name:vn,deals:vm.length,revenue:vm.reduce((s,m)=>s+Number(m.value||0),0)};
+  }).filter(v=>v.deals>0).sort((a,b)=>b.revenue-a.revenue).slice(0,5);
+
+  // Rep performance
+  const repPerf={};
+  ms.forEach(m=>{
+    if(!repPerf[m.repEmail])repPerf[m.repEmail]={name:m.repName||m.repEmail,meetings:0,won:0,pipeline:0,wonVal:0};
+    repPerf[m.repEmail].meetings++;
+    if(m.stage==="Closed Won"){repPerf[m.repEmail].won++;repPerf[m.repEmail].wonVal+=Number(m.value||0);}
+    else repPerf[m.repEmail].pipeline+=Number(m.value||0);
+  });
+  const topReps=Object.values(repPerf).sort((a,b)=>b.wonVal-a.wonVal).slice(0,4);
+
+  const h=new Date().getHours();
+  const greet=h<12?"Good morning":h<17?"Good afternoon":"Good evening";
+
+  document.getElementById("v-command").innerHTML=`
+    <div class="ph" style="margin-bottom:18px">
+      <div>
+        <div class="ph-title">${greet}, ${CU.name.split(" ")[0]}.</div>
+        <div class="ph-sub">Revenue Command Center · Oman · ${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-g btn-s" onclick="renderView('sim')">⚡ Simulate</button>
+        <button class="btn btn-p" onclick="openMeetingForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Log Meeting</button>
+      </div>
+    </div>
+
+    <!-- PRIMARY KPIs -->
+    <div class="g4" style="margin-bottom:14px">
+      ${kpi("Pipeline Value",fOMR(totalPipe),`${fUSD(omrUsd(totalPipe))} · ${active.length} active deals`,"var(--gold)",iRev())}
+      ${kpi("Closed Won",fOMR(totalWon),`Win rate ${winRate}% · ${closed.length} deals`,"var(--green)",iTroph())}
+      ${kpi("Target Achievement",`${targetAch}%`,`${fOMR(target)} monthly target`,"var(--blue)",iFlag())}
+      ${kpi("Avg Margin",`${avgMargin}%`,`Pipeline coverage ${pipelineCoverage}%`,"var(--purple)",iMarg())}
+    </div>
+
+    <!-- SECONDARY KPIs -->
+    <div class="g4" style="margin-bottom:18px">
+      ${kpi("Meetings This Month",mtgThisM,`${ms.length} total meetings`,"var(--teal)",iList())}
+      ${kpi("Overdue Actions",oc.length,oc.length>0?"Requires attention":"All clear ✓","var(--red)",iAlert())}
+      ${kpi("Customers",gCust().length,`${active.length} active opportunities`,"var(--orange)",iCust())}
+      ${kpi("Lost Pipeline",fOMR(totalLost),`Recovery needed`,"rgba(240,82,82,0.8)",iDown())}
+    </div>
+
+    <!-- ROW 1: PIPELINE HEALTH + REP PERFORMANCE -->
+    <div class="g21" style="margin-bottom:14px">
+      <div class="card">
+        <div class="stitle">Pipeline Health by Stage</div>
+        ${STAGES.slice(0,5).map(s=>{
+          const sm=active.filter(m=>m.stage===s);
+          const val=sm.reduce((a,b)=>a+Number(b.value||0),0);
+          const w=totalPipe?pct(val,totalPipe):0;
+          return `<div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:8px;height:8px;border-radius:2px;background:${STAGE_C[s]}"></div>
+                <span style="font-size:12px;color:var(--muted)">${s}</span>
+                <span style="font-size:11px;color:var(--dim)">(${sm.length})</span>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:12px;color:var(--text);font-weight:600;font-family:'DM Mono',monospace">${fOMR(val)}</div>
+                <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(val))}</div>
+              </div>
+            </div>
+            <div class="mbar"><div class="mbar-fill" style="width:${w}%;background:${STAGE_C[s]}"></div></div>
+          </div>`;
+        }).join("")}
+        <div style="display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="flex:1;background:rgba(61,214,140,.08);border:1px solid rgba(61,214,140,.2);border-radius:9px;padding:10px;text-align:center">
+            <div style="font-size:17px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${closed.length}</div>
+            <div style="font-size:10px;color:var(--dim)">Won</div>
+            <div style="font-size:11px;color:var(--green);font-family:'DM Mono',monospace">${fOMR(totalWon)}</div>
+          </div>
+          <div style="flex:1;background:rgba(240,82,82,.08);border:1px solid rgba(240,82,82,.2);border-radius:9px;padding:10px;text-align:center">
+            <div style="font-size:17px;font-weight:700;color:var(--red);font-family:'Playfair Display',serif">${ms.filter(m=>m.stage==="Closed Lost").length}</div>
+            <div style="font-size:10px;color:var(--dim)">Lost</div>
+            <div style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fOMR(totalLost)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="stitle">Rep Performance</div>
+        ${topReps.length===0?`<div style="color:var(--dim);font-size:13px">No data yet</div>`:
+          topReps.map((r,i)=>{
+            const medals=["🥇","🥈","🥉","#4"];
+            return `<div style="margin-bottom:13px">
+              <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">
+                <span style="font-size:14px">${medals[i]||""}</span>
+                <span style="font-size:12px;color:var(--text);font-weight:600;flex:1">${(r.name||"").split(" ")[0]}</span>
+                <span style="font-size:11px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(r.wonVal)}</span>
+              </div>
+              <div class="mbar"><div class="mbar-fill" style="width:${topReps[0].wonVal?pct(r.wonVal,topReps[0].wonVal):0}%;background:var(--gold)"></div></div>
+              <div style="font-size:10px;color:var(--dim);margin-top:3px">${r.meetings} meetings · ${r.won} won · ${fOMR(r.pipeline)} pipeline</div>
+            </div>`;
+          }).join("")
+        }
+      </div>
+    </div>
+
+    <!-- ROW 2: AT RISK + OPPORTUNITIES + VENDOR -->
+    <div class="g3" style="margin-bottom:14px">
+      <div class="card">
+        <div class="stitle"><span style="display:flex;align-items:center;gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>At Risk Deals</span>
+          <span style="font-size:10px;color:var(--red)">${atRisk.length}</span>
+        </div>
+        ${atRisk.length===0?`<div style="font-size:13px;color:var(--dim)">No deals at risk</div>`:
+          atRisk.map(m=>`<div class="risk-item" onclick="viewMeeting('${m.id}');event.stopPropagation()" style="cursor:pointer">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fOMR(m.value)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--dim)">${m.stage} · ${isOD(m)?"⚠ Overdue":m.priority+" priority"}</div>
+          </div>`).join("")
+        }
+      </div>
+      <div class="card">
+        <div class="stitle"><span style="display:flex;align-items:center;gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Expansion Opportunities</span></div>
+        ${expOpp.length===0?`<div style="font-size:13px;color:var(--dim)">Add customers to see opportunities</div>`:
+          expOpp.map(c=>{
+            const score=penetrationScore(c.name);
+            const cMtg=ms.filter(m=>m.account===c.name).length;
+            return `<div class="opp-item">
+              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                <span style="font-size:12px;color:var(--text);font-weight:600">${c.name}</span>
+                <span style="font-size:11px;color:var(--orange)">${score}% penetrated</span>
+              </div>
+              <div style="font-size:11px;color:var(--dim)">${cMtg} meetings · ${c.industry||"Unknown"}</div>
+              <div class="mbar" style="margin-top:5px"><div class="mbar-fill" style="width:${score}%;background:var(--orange)"></div></div>
+            </div>`;
+          }).join("")
+        }
+      </div>
+      <div class="card">
+        <div class="stitle">Vendor Revenue Contribution</div>
+        ${vPerf.length===0?`<div style="font-size:13px;color:var(--dim)">Log meetings with vendors to see data</div>`:
+          vPerf.map((v,i)=>`<div style="margin-bottom:11px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+              <span style="font-size:12px;color:var(--muted)">${v.name}</span>
+              <span style="font-size:11px;color:${CHART_C[i]};font-weight:600;font-family:'DM Mono',monospace">${fOMR(v.revenue)}</span>
+            </div>
+            <div class="mbar"><div class="mbar-fill" style="width:${vPerf[0].revenue?pct(v.revenue,vPerf[0].revenue):0}%;background:${CHART_C[i]}"></div></div>
+            <div style="font-size:10px;color:var(--dim);margin-top:2px">${v.deals} deals closed</div>
+          </div>`).join("")
+        }
+      </div>
+    </div>
+
+    <!-- ROW 3: OVERDUE + CASHFLOW PREVIEW + WEEK TREND -->
+    <div class="g3">
+      <div class="card">
+        <div class="stitle" style="display:flex;align-items:center;gap:6px;margin-bottom:14px">
+          <span>Overdue Actions</span>
+          ${oc.length>0?`<span style="background:rgba(240,82,82,.2);color:var(--red);border-radius:20px;padding:1px 7px;font-size:10px">${oc.length}</span>`:""}
+        </div>
+        ${oc.length===0
+          ?`<div style="font-size:13px;color:var(--dim);display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>All actions up to date</div>`
+          :oc.slice(0,5).map(m=>`<div class="risk-item" onclick="viewMeeting('${m.id}')" style="cursor:pointer">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fDate(m.nextDate)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--dim)">${(m.repName||"").split(" ")[0]} · ${m.nextAction||"Action pending"}</div>
+          </div>`).join("")
+        }
+      </div>
+      <div class="card">
+        <div class="stitle">Cashflow Forecast (6 months)</div>
+        ${cashflowPreview(ms)}
+      </div>
+      <div class="card">
+        <div class="stitle">12-Week Activity</div>
+        ${weekBars(ms)}
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// PIPELINE VIEW
+// ═══════════════════════════════════════════════════
+let pFilters={search:"",stage:"",vendor:"",priority:"",rep:""};
+function rPipeline(){
+  const ms=myMtg();
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  const totalPipe=active.reduce((s,m)=>s+Number(m.value||0),0);
+
+  document.getElementById("v-pipeline").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Pipeline Intelligence</div><div class="ph-sub">${active.length} active deals · ${fOMR(totalPipe)} total pipeline</div></div>
+      <button class="btn btn-p" onclick="openDealForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Deal</button>
+    </div>
+    <div class="g3" style="margin-bottom:14px">
+      ${STAGES.slice(0,6).map(s=>{
+        const sm=ms.filter(m=>m.stage===s);
+        const val=sm.reduce((a,b)=>a+Number(b.value||0),0);
+        const c=STAGE_C[s];
+        return `<div class="card" style="border-color:${c}22">
+          <div style="font-size:10px;color:${c};margin-bottom:10px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em">${s}</div>
+          <div style="font-size:24px;font-weight:700;font-family:'Playfair Display',serif">${sm.length}</div>
+          <div style="font-size:11px;color:var(--dim);margin-bottom:8px">deals</div>
+          <div class="mbar"><div class="mbar-fill" style="width:${ms.length?pct(sm.length,ms.length):0}%;background:${c}"></div></div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <div style="font-size:14px;font-weight:600;color:var(--green);font-family:'DM Mono',monospace">${fOMR(val)}</div>
+            <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(val))}</div>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="g3" style="margin-bottom:14px">
+      <div class="card">${donut(STAGES.slice(0,5).map(s=>({k:s,v:ms.filter(m=>m.stage===s).length})).filter(d=>d.v>0),"Stage Distribution")}</div>
+      <div class="card">${donut(gCust().slice(0,6).map(c=>({k:c.name,v:ms.filter(m=>m.account===c.name).length})).filter(d=>d.v>0),"Top Accounts")}</div>
+      <div class="card">${donut(gVend().slice(0,6).map(v=>({k:v.name||v,v:ms.filter(m=>m.vendor===(v.name||v)).length})).filter(d=>d.v>0),"Vendor Mix")}</div>
+    </div>
+    <div class="card-flush">
+      <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input class="fi" placeholder="Search…" value="${pFilters.search}" oninput="pFilters.search=this.value;rPipeline()" style="width:180px;padding:7px 11px;font-size:12px"/>
+        <select class="fi" onchange="pFilters.stage=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${s}" ${pFilters.stage===s?"selected":""}>${s}</option>`).join("")}</select>
+        <select class="fi" onchange="pFilters.priority=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${pFilters.priority===p?"selected":""}>${p}</option>`).join("")}</select>
+        <button class="btn btn-g btn-s" onclick="pFilters={search:'',stage:'',vendor:'',priority:'',rep:''};rPipeline()">Clear</button>
+        <span style="margin-left:auto;font-size:11px;color:var(--dim);font-family:'DM Mono',monospace">${filterMeetings(ms,pFilters).length} results</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th></th><th>Date</th><th>Customer</th><th>Vendor</th><th>Stage</th><th>Value (OMR)</th><th>Margin%</th><th>Attribution</th><th>Rep</th><th>Next Action</th><th></th></tr></thead>
+        <tbody>
+          ${filterMeetings(ms,pFilters).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,60).map(m=>`
+          <tr>
+            <td><div style="width:7px;height:7px;border-radius:50%;background:${m.priority==="High"?"var(--red)":m.priority==="Medium"?"var(--orange)":"var(--dim)"}"></div></td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${m.date}</td>
+            <td style="color:var(--text);font-weight:500">${m.account}</td>
+            <td style="color:var(--gold);font-size:11px">${m.vendor||"—"}</td>
+            <td>${sbadge(m.stage)}</td>
+            <td>
+              <div style="font-size:12px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
+              <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(m.value))}</div>
+            </td>
+            <td style="color:${Number(m.margin||0)>=30?"var(--green)":Number(m.margin||0)>=15?"var(--orange)":"var(--red)"};font-weight:600;font-family:'DM Mono',monospace">${m.margin||"—"}%</td>
+            <td>
+              <div style="font-size:10px;color:var(--dim)">
+                ${m.attr_sales?`S:${m.attr_sales}% `:""}${m.attr_presales?`P:${m.attr_presales}% `:""}${m.attr_vendor?`V:${m.attr_vendor}%`:""}
+              </div>
+            </td>
+            <td style="font-size:11px;color:var(--muted)">${(m.repName||"").split(" ")[0]}</td>
+            <td style="font-size:11px;color:var(--dim);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${m.nextAction||"—"}</td>
+            <td>
+              <div style="display:flex;gap:3px">
+                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${m.id}')">${iEye()}</button>
+                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${m.id}')">${iEdit()}</button>`:""}
+                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${m.id}')">${iTrash()}</button>`:""}
+              </div>
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// MEETINGS VIEW
+// ═══════════════════════════════════════════════════
+let mFilters={search:"",stage:"",vendor:"",priority:"",rep:""};
+function rMeetings(){
+  const ms=myMtg();
+  const fms=filterMeetings(ms,mFilters).sort((a,b)=>a.date<b.date?1:-1);
+  document.getElementById("v-meetings").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Meeting Log</div><div class="ph-sub">${fms.length} shown · ${ms.length} total</div></div>
+      <button class="btn btn-p" onclick="openMeetingForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Log Meeting</button>
+    </div>
+    <div class="fbar">
+      <input class="fi" placeholder="Search customer, notes…" value="${mFilters.search}" oninput="mFilters.search=this.value;rMeetings()" style="width:190px;padding:7px 11px;font-size:12px"/>
+      ${CU.role!=="rep"&&CU.role!=="presales"?`<select class="fi" onchange="mFilters.rep=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Reps</option>${gReps().map(u=>`<option value="${u.email}" ${mFilters.rep===u.email?"selected":""}>${u.name.split(" ")[0]}</option>`).join("")}</select>`:""}
+      <select class="fi" onchange="mFilters.stage=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${s}" ${mFilters.stage===s?"selected":""}>${s}</option>`).join("")}</select>
+      <select class="fi" onchange="mFilters.vendor=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Vendors</option>${gVend().map(v=>`<option value="${v.name||v}" ${mFilters.vendor===(v.name||v)?"selected":""}>${v.name||v}</option>`).join("")}</select>
+      <select class="fi" onchange="mFilters.priority=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${mFilters.priority===p?"selected":""}>${p}</option>`).join("")}</select>
+      <button class="btn btn-g btn-s" onclick="mFilters={search:'',stage:'',vendor:'',priority:'',rep:''};rMeetings()">Clear</button>
+    </div>
+    <div class="card-flush">
+      <table class="tbl">
+        <thead><tr><th></th><th>Date</th><th>Rep</th><th>Customer</th><th>Vendor</th><th>Type</th><th>Stage</th><th>Value</th><th>Score</th><th>Next Action</th><th></th></tr></thead>
+        <tbody>
+          ${fms.slice(0,80).map(m=>`<tr>
+            <td><div style="width:7px;height:7px;border-radius:50%;background:${m.priority==="High"?"var(--red)":m.priority==="Medium"?"var(--orange)":"var(--dim)"}"></div></td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap">${m.date}</td>
+            <td style="color:var(--text);font-weight:600;white-space:nowrap">${(m.repName||"").split(" ")[0]}</td>
+            <td style="color:var(--text);font-weight:500;white-space:nowrap">${m.account}</td>
+            <td style="color:var(--gold);font-size:11px;white-space:nowrap">${m.vendor||"—"}</td>
+            <td style="color:var(--dim);font-size:11px;white-space:nowrap">${m.type||"—"}</td>
+            <td>${sbadge(m.stage)}</td>
+            <td>
+              <div style="font-size:12px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
+              <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(m.value))}</div>
+            </td>
+            <td>${stars(m.score)}</td>
+            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dim)">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${m.nextAction||""}</td>
+            <td>
+              <div style="display:flex;gap:3px">
+                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${m.id}')">${iEye()}</button>
+                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${m.id}')">${iEdit()}</button>`:""}
+                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${m.id}')">${iTrash()}</button>`:""}
+              </div>
+            </td>
+          </tr>`).join("")}
+          ${fms.length===0?`<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--dim)">No meetings found</td></tr>`:""}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// REVENUE ENGINE
+// ═══════════════════════════════════════════════════
+function rRevenue(){
+  const ms=myMtg();
+  const closed=ms.filter(m=>m.stage==="Closed Won");
+  const totalRev=closed.reduce((s,m)=>s+Number(m.value||0),0);
+
+  // Monthly revenue trend
+  const months=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(); d.setMonth(d.getMonth()-i);
+    const ym2=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    const mRev=closed.filter(m=>ym(m.date)===ym2).reduce((s,m)=>s+Number(m.value||0),0);
+    months.push({label:d.toLocaleDateString("en-GB",{month:"short"}),rev:mRev,ym:ym2});
+  }
+  const maxRev=Math.max(...months.map(m=>m.rev),1);
+
+  // Attribution breakdown
+  const totalAttrS=closed.reduce((s,m)=>s+Number(m.attr_sales||60),0)/Math.max(closed.length,1);
+  const totalAttrP=closed.reduce((s,m)=>s+Number(m.attr_presales||20),0)/Math.max(closed.length,1);
+  const totalAttrV=closed.reduce((s,m)=>s+Number(m.attr_vendor||15),0)/Math.max(closed.length,1);
+  const totalAttrG=closed.reduce((s,m)=>s+Number(m.attr_gsi||5),0)/Math.max(closed.length,1);
+
+  // GSI performance
+  const gsiPerf={};
+  closed.filter(m=>m.gsi_partner).forEach(m=>{
+    if(!gsiPerf[m.gsi_partner])gsiPerf[m.gsi_partner]={name:m.gsi_partner,deals:0,revenue:0};
+    gsiPerf[m.gsi_partner].deals++;
+    gsiPerf[m.gsi_partner].revenue+=Number(m.value||0);
+  });
+
+  document.getElementById("v-revenue").innerHTML=`
+    <div class="ph"><div class="ph-title">Revenue Engine</div><div class="ph-sub">Attribution, trends, and GSI performance</div></div>
+    <div class="g4" style="margin-bottom:14px">
+      ${kpi("Total Revenue",fOMR(totalRev),`${fUSD(omrUsd(totalRev))}`,"var(--green)",iRev())}
+      ${kpi("Closed Deals",closed.length,`Win rate ${ms.length?pct(closed.length,ms.length):0}%`,"var(--gold)",iTroph())}
+      ${kpi("Avg Deal Size",fOMR(closed.length?totalRev/closed.length:0),"Per closed deal","var(--blue)",iFlag())}
+      ${kpi("GSI Revenue",fOMR(Object.values(gsiPerf).reduce((s,g)=>s+g.revenue,0)),`${Object.keys(gsiPerf).length} active partners`,"var(--purple)",iUsers())}
+    </div>
+    <div class="g21" style="margin-bottom:14px">
+      <div class="card">
+        <div class="stitle">Monthly Revenue Trend (6 months)</div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:80px;margin-bottom:8px">
+          ${months.map(m=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div style="font-size:9px;color:var(--dim);font-family:'DM Mono',monospace">${fOMR(m.rev).split(" ")[1]||"0"}</div>
+            <div style="width:100%;height:${m.rev?(m.rev/maxRev)*60:0}px;background:linear-gradient(180deg,var(--gold),#9a7520);border-radius:4px 4px 0 0;min-height:${m.rev?3:0}px;transition:height .5s"></div>
+            <div style="font-size:10px;color:var(--dim)">${m.label}</div>
+          </div>`).join("")}
+        </div>
+      </div>
+      <div class="card">
+        <div class="stitle">Revenue Attribution</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${[["Sales",totalAttrS,"var(--gold)"],["Presales",totalAttrP,"var(--blue)"],["Vendor",totalAttrV,"var(--purple)"],["GSI",totalAttrG,"var(--green)"]].map(([l,v,c])=>`
+            <div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                <span style="font-size:12px;color:var(--muted)">${l}</span>
+                <span style="font-size:12px;color:${c};font-weight:600;font-family:'DM Mono',monospace">${v.toFixed(0)}%</span>
+              </div>
+              <div class="mbar"><div class="mbar-fill" style="width:${v}%;background:${c}"></div></div>
+            </div>`).join("")}
+        </div>
+        <div style="margin-top:14px;padding:10px;background:rgba(255,255,255,.03);border-radius:8px;font-size:11px;color:var(--dim)">
+          Attribution set per meeting in the meeting form. Default: Sales 60% · Presales 20% · Vendor 15% · GSI 5%
+        </div>
+      </div>
+    </div>
+    <div class="g2">
+      <div class="card">
+        ${barChart(gVend().map(v=>({k:v.name||v,v:closed.filter(m=>m.vendor===(v.name||v)).reduce((s,m)=>s+Number(m.value||0),0)})).filter(d=>d.v>0).sort((a,b)=>b.v-a.v).slice(0,8),"Revenue by Vendor","var(--teal)",v=>fOMR(v))}
+      </div>
+      <div class="card">
+        <div class="stitle">GSI Partner Performance</div>
+        ${Object.values(gsiPerf).length===0
+          ?`<div style="font-size:13px;color:var(--dim)">No GSI deals logged yet.<br><br><span style="font-size:11px">Set GSI Partner when logging meetings with GSI involvement.</span></div>`
+          :Object.values(gsiPerf).sort((a,b)=>b.revenue-a.revenue).map((g,i)=>`<div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+              <span style="font-size:12px;color:var(--muted)">${g.name}</span>
+              <span style="font-size:12px;color:${CHART_C[i]};font-weight:600;font-family:'DM Mono',monospace">${fOMR(g.revenue)}</span>
+            </div>
+            <div class="mbar"><div class="mbar-fill" style="width:${Object.values(gsiPerf)[0].revenue?pct(g.revenue,Object.values(gsiPerf)[0].revenue):0}%;background:${CHART_C[i]}"></div></div>
+            <div style="font-size:10px;color:var(--dim);margin-top:2px">${g.deals} deals closed</div>
+          </div>`).join("")
+        }
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// MARGIN CONTROL
+// ═══════════════════════════════════════════════════
+function rMargin(){
+  const ms=myMtg();
+  const closed=ms.filter(m=>m.stage==="Closed Won"&&m.margin);
+  const avgMargin=closed.length?(closed.reduce((s,m)=>s+Number(m.margin||0),0)/closed.length).toFixed(1):0;
+  const highMargin=closed.filter(m=>Number(m.margin||0)>=30).length;
+  const lowMargin=closed.filter(m=>Number(m.margin||0)<15).length;
+  const totalRev=closed.reduce((s,m)=>s+Number(m.value||0),0);
+  const marginVal=closed.reduce((s,m)=>s+Number(m.value||0)*Number(m.margin||0)/100,0);
+
+  document.getElementById("v-margin").innerHTML=`
+    <div class="ph"><div class="ph-title">Margin Control</div><div class="ph-sub">Track and protect your margins across all deals</div></div>
+    <div class="g4" style="margin-bottom:14px">
+      ${kpi("Average Margin",`${avgMargin}%`,`Target: 25%+`,"var(--green)",iMarg())}
+      ${kpi("Margin Value",fOMR(marginVal),`${fUSD(omrUsd(marginVal))} gross profit`,"var(--gold)",iRev())}
+      ${kpi("High Margin Deals",highMargin,`Margin ≥ 30% · ${closed.length?pct(highMargin,closed.length):0}% of closed`,"var(--blue)",iTroph())}
+      ${kpi("Low Margin Deals",lowMargin,`Margin < 15% · Review needed`,"var(--red)",iAlert())}
+    </div>
+    <div class="g2" style="margin-bottom:14px">
+      <div class="card">
+        <div class="stitle">Margin Distribution</div>
+        ${[["< 10%","var(--red)",ms.filter(m=>Number(m.margin||0)<10)],["10–19%","var(--orange)",ms.filter(m=>Number(m.margin||0)>=10&&Number(m.margin||0)<20)],["20–29%","var(--gold)",ms.filter(m=>Number(m.margin||0)>=20&&Number(m.margin||0)<30)],["30%+","var(--green)",ms.filter(m=>Number(m.margin||0)>=30)]].map(([l,c,deals])=>`
+          <div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+              <span style="font-size:12px;color:${c};font-weight:600">${l}</span>
+              <span style="font-size:12px;color:var(--text);font-family:'DM Mono',monospace">${deals.length} deals · ${fOMR(deals.reduce((s,m)=>s+Number(m.value||0),0))}</span>
+            </div>
+            <div class="mbar"><div class="mbar-fill" style="width:${ms.length?pct(deals.length,ms.length):0}%;background:${c}"></div></div>
+          </div>`).join("")}
+      </div>
+      <div class="card">
+        ${barChart(gVend().map(v=>{
+          const vm=closed.filter(m=>m.vendor===(v.name||v)&&m.margin);
+          return {k:v.name||v,v:vm.length?(vm.reduce((s,m)=>s+Number(m.margin||0),0)/vm.length):0};
+        }).filter(d=>d.v>0).sort((a,b)=>b.v-a.v).slice(0,8),"Avg Margin by Vendor","var(--purple)",v=>`${v.toFixed(1)}%`)}
+      </div>
+    </div>
+    <div class="card-flush">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em">Deal Margin Detail</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>Customer</th><th>Vendor</th><th>Stage</th><th>Value (OMR)</th><th>Margin %</th><th>Margin Value</th><th>Rep</th><th>Flag</th></tr></thead>
+        <tbody>
+          ${ms.filter(m=>m.margin).sort((a,b)=>Number(a.margin||0)-Number(b.margin||0)).slice(0,50).map(m=>{
+            const mg=Number(m.margin||0); const mv=Number(m.value||0)*mg/100;
+            const flag=mg<15?"🔴 Low":mg<25?"🟡 Mid":"🟢 Good";
+            return `<tr>
+              <td style="color:var(--text);font-weight:500">${m.account}</td>
+              <td style="color:var(--gold);font-size:11px">${m.vendor||"—"}</td>
+              <td>${sbadge(m.stage)}</td>
+              <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(m.value)}</td>
+              <td style="font-weight:700;color:${mg>=30?"var(--green)":mg>=15?"var(--orange)":"var(--red)"};font-family:'DM Mono',monospace">${mg}%</td>
+              <td style="font-family:'DM Mono',monospace;color:var(--muted)">${fOMR(mv)}</td>
+              <td style="color:var(--dim);font-size:11px">${(m.repName||"").split(" ")[0]}</td>
+              <td style="font-size:12px">${flag}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// ACCOUNTS (Penetration Score)
+// ═══════════════════════════════════════════════════
+function rAccounts(){
+  const ms=myMtg();
+  const customers=gCust();
+  document.getElementById("v-accounts").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Account Intelligence</div><div class="ph-sub">Penetration scores, CLV, and expansion opportunities</div></div>
+      <button class="btn btn-p" onclick="renderView('customers')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Customer</button>
+    </div>
+    ${customers.length===0
+      ?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:32px;margin-bottom:12px">🏢</div><div style="font-size:15px;font-weight:600;margin-bottom:6px">No customers yet</div><div style="font-size:13px;color:var(--dim);margin-bottom:20px">Add customers to see penetration scores and account intelligence</div><button class="btn btn-p" onclick="renderView('customers')">Add First Customer</button></div>`
+      :`<div class="card-flush">
+        <table class="tbl">
+          <thead><tr><th>Customer</th><th>Industry</th><th>Meetings</th><th>Pipeline</th><th>Won</th><th>Penetration Score</th><th>CLV Potential</th><th>Status</th><th>Focal Point</th></tr></thead>
+          <tbody>
+            ${customers.map(c=>{
+              const cMtg=ms.filter(m=>m.account===c.name);
+              const cPipe=cMtg.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage)).reduce((s,m)=>s+Number(m.value||0),0);
+              const cWon=cMtg.filter(m=>m.stage==="Closed Won").reduce((s,m)=>s+Number(m.value||0),0);
+              const score=penetrationScore(c.name);
+              const clv=cWon*2.5; // estimated CLV = 2.5x historical revenue
+              const status=score>=70?"🟢 Strategic":score>=40?"🟡 Growing":"🔴 Early Stage";
+              return `<tr>
+                <td style="color:var(--text);font-weight:600">${c.name}</td>
+                <td style="color:var(--dim);font-size:11px">${c.industry||"—"}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--gold)">${cMtg.length}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--blue)">${fOMR(cPipe)}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(cWon)}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <div class="mbar" style="width:80px"><div class="mbar-fill" style="width:${score}%;background:${score>=70?"var(--green)":score>=40?"var(--orange)":"var(--red)"}"></div></div>
+                    <span style="font-size:11px;font-weight:600;color:${score>=70?"var(--green)":score>=40?"var(--orange)":"var(--red)"};font-family:'DM Mono',monospace">${score}%</span>
+                  </div>
+                </td>
+                <td style="font-family:'DM Mono',monospace;color:var(--purple)">${fOMR(clv)}</td>
+                <td style="font-size:11px">${status}</td>
+                <td>
+                  <div style="font-size:11px;color:var(--text)">${c.focalName||"—"}</div>
+                  ${c.focalPhone?`<div style="font-size:10px;color:var(--blue)">${c.focalPhone}</div>`:""}
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`
+    }
+  `;
+}
+
+function penetrationScore(customerName){
+  const ms=D.meetings.filter(m=>m.account===customerName);
+  if(!ms.length)return 0;
+  let score=0;
+  score+=Math.min(ms.length*5,25); // meetings (up to 25pts)
+  const vendors=new Set(ms.map(m=>m.vendor).filter(Boolean));
+  score+=Math.min(vendors.size*8,24); // vendor diversity (up to 24pts)
+  if(ms.some(m=>m.stage==="Closed Won"))score+=20; // has won deal
+  if(ms.some(m=>m.type==="Executive Briefing"))score+=10; // exec access
+  if(ms.some(m=>m.type==="QBR"))score+=10; // QBR = deep relationship
+  const types=new Set(ms.map(m=>m.type).filter(Boolean));
+  score+=Math.min(types.size*2,11); // meeting type diversity
+  return Math.min(score,100);
+}
+
+// ═══════════════════════════════════════════════════
+// INCENTIVE ENGINE
+// ═══════════════════════════════════════════════════
+function rIncentive(){
+  const ms=myMtg();
+  const closed=ms.filter(m=>m.stage==="Closed Won");
+  const rules=D.incentive_rules||getDefaultRules();
+
+  // Calculate per rep
+  const repCalc={};
+  closed.forEach(m=>{
+    if(!repCalc[m.repEmail])repCalc[m.repEmail]={name:m.repName||m.repEmail,email:m.repEmail,deals:[],totalRev:0,totalComm:0};
+    const r=repCalc[m.repEmail];
+    r.totalRev+=Number(m.value||0);
+    let comm=Number(m.value||0)*(Number(D.users.find(u=>u.email===m.repEmail)?.commission_rate||3)/100);
+    // Apply rules
+    if(Number(m.margin||0)>=30) comm*=1+(rules.find(r=>r.id==="r2")?.value||1.5)/100;
+    if(m.strategic_flag) comm+=Number(m.value||0)*(rules.find(r=>r.id==="r5")?.value||2)/100;
+    r.totalComm+=comm;
+    r.deals.push({...m,commission:comm});
+  });
+
+  // Target achievement per rep
+  const repRows=Object.values(repCalc).sort((a,b)=>b.totalComm-a.totalComm);
+
+  document.getElementById("v-incentive").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Incentive Engine</div><div class="ph-sub">Automated commission calculation · No manual work</div></div>
+      ${CU.role==="admin"?`<button class="btn btn-g btn-s" onclick="openRulesEditor()">⚙ Edit Rules</button>`:""}
+    </div>
+
+    <!-- RULES SUMMARY -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="stitle">Active Commission Rules</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${rules.map(r=>`<div style="background:var(--gold-dim);border:1px solid var(--gold-border);border-radius:9px;padding:10px 14px;min-width:160px">
+          <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:3px">${r.name}</div>
+          <div style="font-size:11px;color:var(--muted)">${r.description}</div>
+        </div>`).join("")}
+      </div>
+    </div>
+
+    <!-- REP PAYOUT TABLE -->
+    <div class="card-flush">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border)">
+        <span style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em">Rep Commission Summary · All Time</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>Rep</th><th>Deals Closed</th><th>Revenue Generated</th><th>Base Rate</th><th>Estimated Commission</th><th>USD Equiv</th></tr></thead>
+        <tbody>
+          ${repRows.length===0
+            ?`<tr><td colspan="6" style="padding:40px;text-align:center;color:var(--dim)">No closed deals yet</td></tr>`
+            :repRows.map(r=>{
+              const u=D.users.find(u=>u.email===r.email);
+              return `<tr>
+                <td><div style="display:flex;align-items:center;gap:8px">
+                  <div class="av" style="width:28px;height:28px;background:linear-gradient(135deg,var(--gold),#9a7520);font-size:10px;color:#07090f">${(r.name||"?").split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
+                  <span style="font-weight:600;color:var(--text)">${r.name}</span>
+                </div></td>
+                <td style="font-family:'DM Mono',monospace;color:var(--gold)">${r.deals.length}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(r.totalRev)}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--dim)">${u?.commission_rate||3}%</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--gold);font-weight:700;font-size:14px">${fOMR(r.totalComm)}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--dim);font-size:11px">${fUSD(omrUsd(r.totalComm))}</td>
+              </tr>`;
+            }).join("")
+          }
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openRulesEditor(){
+  const rules=D.incentive_rules||getDefaultRules();
+  showModal("Commission Rules Editor",`
+    <div style="margin-bottom:14px;padding:12px;background:rgba(200,168,75,.06);border:1px solid var(--gold-border);border-radius:9px;font-size:12px;color:var(--muted)">
+      Rules are applied automatically when calculating rep commissions. Changes take effect immediately on all future calculations.
+    </div>
+    ${rules.map((r,i)=>`<div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600;color:var(--text)">${r.name}</span>
+        <span style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace">${r.value}%</span>
+      </div>
+      <div style="font-size:12px;color:var(--dim)">${r.description}</div>
+    </div>`).join("")}
+    <div style="margin-top:14px;font-size:12px;color:var(--dim)">Full rule editing coming in next update. Contact admin to modify rules.</div>
+  `,"narrow");
+}
+
+// ═══════════════════════════════════════════════════
+// CASHFLOW
+// ═══════════════════════════════════════════════════
+function rCashflow(){
+  const ms=myMtg();
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  document.getElementById("v-cashflow").innerHTML=`
+    <div class="ph"><div class="ph-title">Cashflow Intelligence</div><div class="ph-sub">Predicted inflows, gaps, and risk accounts</div></div>
+    <div class="g3" style="margin-bottom:14px">
+      ${[0,1,2,3,4,5].map(i=>{
+        const d=new Date(); d.setMonth(d.getMonth()+i);
+        const ym2=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        const label=d.toLocaleDateString("en-GB",{month:"long",year:"numeric"});
+        // Expected: deals in Proposal/Negotiation with next date in this month
+        const expected=active.filter(m=>["Proposal","Negotiation","Closed Won"].includes(m.stage)&&m.nextDate&&ym(m.nextDate)===ym2);
+        const val=expected.reduce((s,m)=>s+Number(m.value||0)*([["Proposal",0.4],["Negotiation",0.7],["Closed Won",1]].find(([s2])=>s2===m.stage)?.[1]||0.3),0);
+        return `<div class="card" style="border-color:${i===0?"var(--gold-border)":"var(--border)"}">
+          <div style="font-size:10px;color:${i===0?"var(--gold)":"var(--dim)"};font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">${i===0?"This Month":i===1?"Next Month":label}</div>
+          <div style="font-size:20px;font-weight:700;font-family:'Playfair Display',serif;color:var(--text)">${fOMR(val)}</div>
+          <div style="font-size:10px;color:var(--dim);margin-top:3px">${fUSD(omrUsd(val))}</div>
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--muted)">${expected.length} expected deals</div>
+            <div style="font-size:10px;color:var(--dim)">Probability-weighted</div>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="g2">
+      <div class="card">
+        <div class="stitle">Deals Expected to Close Soon</div>
+        ${active.filter(m=>["Proposal","Negotiation"].includes(m.stage)).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,8).map(m=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+            <div>
+              <div style="font-size:13px;color:var(--text);font-weight:500">${m.account}</div>
+              <div style="font-size:11px;color:var(--dim)">${m.stage} · ${m.vendor||"—"} · Due ${fDate(m.nextDate)}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:13px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
+              <div style="font-size:10px;color:var(--dim)">${sbadge(m.stage)}</div>
+            </div>
+          </div>`).join("")||`<div style="color:var(--dim);font-size:13px">No deals in Proposal or Negotiation stage</div>`}
+      </div>
+      <div class="card">
+        <div class="stitle">Risk Accounts (Overdue)</div>
+        ${ms.filter(isOD).slice(0,8).map(m=>`
+          <div class="risk-item">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fOMR(m.value)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--dim)">${m.nextAction||"Action pending"} · Due ${fDate(m.nextDate)}</div>
+          </div>`).join("")||`<div style="font-size:13px;color:var(--dim)">No overdue accounts</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function cashflowPreview(ms){
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  const months=[];
+  for(let i=0;i<6;i++){
+    const d=new Date(); d.setMonth(d.getMonth()+i);
+    const ym2=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    const expected=active.filter(m=>["Proposal","Negotiation"].includes(m.stage)&&m.nextDate&&ym(m.nextDate)===ym2);
+    const val=expected.reduce((s,m)=>s+Number(m.value||0)*([["Proposal",0.4],["Negotiation",0.7]].find(([s2])=>s2===m.stage)?.[1]||0.3),0);
+    months.push({label:d.toLocaleDateString("en-GB",{month:"short"}),val});
+  }
+  const max=Math.max(...months.map(m=>m.val),1);
+  return `<div style="display:flex;align-items:flex-end;gap:4px;height:60px">
+    ${months.map(m=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+      <div style="width:100%;height:${m.val?(m.val/max)*50:0}px;background:linear-gradient(180deg,var(--teal),#0d9488);border-radius:3px 3px 0 0;min-height:${m.val?3:0}px"></div>
+      <div style="font-size:9px;color:var(--dim)">${m.label}</div>
+    </div>`).join("")}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// SCENARIO SIMULATION ENGINE
+// ═══════════════════════════════════════════════════
+function rSim(){
+  const ms=myMtg();
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  const closed=ms.filter(m=>m.stage==="Closed Won");
+  const totalPipe=active.reduce((s,m)=>s+Number(m.value||0),0);
+  const totalWon=closed.reduce((s,m)=>s+Number(m.value||0),0);
+  const avgDealSize=closed.length?totalWon/closed.length:50000;
+  const winRate=ms.length?pct(closed.length,ms.length):30;
+
+  document.getElementById("v-sim").innerHTML=`
+    <div class="ph"><div class="ph-title">⚡ Scenario Simulation Engine</div><div class="ph-sub">Simulate business decisions before making them</div></div>
+
+    <div class="g2" style="margin-bottom:14px">
+      <!-- HEADCOUNT SIMULATION -->
+      <div class="card">
+        <div class="stitle">👥 Headcount Impact</div>
+        <div style="margin-bottom:16px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Add Sales Reps</label>
+          <input type="range" class="sim-slider" min="0" max="10" value="2" id="sim-reps" oninput="runSim()"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>0</span><span id="sim-reps-val">2 reps</span><span>10</span></div>
+        </div>
+        <div style="margin-bottom:16px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Meetings per rep per month</label>
+          <input type="range" class="sim-slider" min="2" max="20" value="8" id="sim-mtgs" oninput="runSim()"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>2</span><span id="sim-mtgs-val">8/month</span><span>20</span></div>
+        </div>
+        <div id="sim-headcount-result" class="sim-result"></div>
+      </div>
+
+      <!-- MARGIN SIMULATION -->
+      <div class="card">
+        <div class="stitle">📊 Margin Improvement</div>
+        <div style="margin-bottom:16px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Increase margin by</label>
+          <input type="range" class="sim-slider" min="0" max="15" value="5" id="sim-margin" oninput="runSim()"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>0%</span><span id="sim-margin-val">+5%</span><span>+15%</span></div>
+        </div>
+        <div id="sim-margin-result" class="sim-result"></div>
+      </div>
+
+      <!-- WIN RATE SIMULATION -->
+      <div class="card">
+        <div class="stitle">🎯 Win Rate Improvement</div>
+        <div style="margin-bottom:16px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Improve win rate by</label>
+          <input type="range" class="sim-slider" min="0" max="30" value="10" id="sim-winrate" oninput="runSim()"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>0%</span><span id="sim-winrate-val">+10%</span><span>+30%</span></div>
+        </div>
+        <div id="sim-winrate-result" class="sim-result"></div>
+      </div>
+
+      <!-- VENDOR FOCUS SIMULATION -->
+      <div class="card">
+        <div class="stitle">🔧 Vendor Focus Shift</div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Focus vendor</label>
+          <select class="fi" id="sim-vendor" onchange="runSim()" style="font-size:12px;padding:8px 11px">
+            ${gVend().slice(0,8).map(v=>`<option>${v.name||v}</option>`).join("")}
+          </select>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Increase meetings by</label>
+          <input type="range" class="sim-slider" min="0" max="20" value="5" id="sim-vendor-mtgs" oninput="runSim()"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>0</span><span id="sim-vendor-mtgs-val">+5/month</span><span>+20</span></div>
+        </div>
+        <div id="sim-vendor-result" class="sim-result"></div>
+      </div>
+    </div>
+
+    <!-- COMBINED SCENARIO -->
+    <div class="card">
+      <div class="stitle">🚀 Combined Impact Forecast (12 months)</div>
+      <div id="sim-combined" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px"></div>
+    </div>
+  `;
+
+  runSim();
+}
+
+function runSim(){
+  const ms=myMtg();
+  const closed=ms.filter(m=>m.stage==="Closed Won");
+  const active=ms.filter(m=>!["Closed Won","Closed Lost"].includes(m.stage));
+  const totalWon=closed.reduce((s,m)=>s+Number(m.value||0),0);
+  const avgDeal=closed.length?totalWon/closed.length:50000;
+  const wr=ms.length?closed.length/ms.length:0.3;
+  const curMarginPct=closed.length?(closed.reduce((s,m)=>s+Number(m.margin||20),0)/closed.length)/100:0.2;
+  const curMarginVal=totalWon*curMarginPct;
+
+  // Headcount sim
+  const reps=Number(document.getElementById("sim-reps")?.value||2);
+  const mtgs=Number(document.getElementById("sim-mtgs")?.value||8);
+  document.getElementById("sim-reps-val")&&(document.getElementById("sim-reps-val").textContent=`${reps} reps`);
+  document.getElementById("sim-mtgs-val")&&(document.getElementById("sim-mtgs-val").textContent=`${mtgs}/month`);
+  const newDeals=reps*mtgs*12*wr;
+  const newRevenue=newDeals*avgDeal;
+  const repCost=reps*18000*12; // ~OMR 18K/year per rep
+  const netGain=newRevenue-repCost;
+  const hcEl=document.getElementById("sim-headcount-result");
+  if(hcEl)hcEl.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><div style="font-size:10px;color:var(--dim)">New deals/year</div><div style="font-size:16px;font-weight:700;color:var(--gold);font-family:'Playfair Display',serif">${Math.round(newDeals)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Revenue gain</div><div style="font-size:16px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${fOMR(newRevenue)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Team cost</div><div style="font-size:14px;font-weight:600;color:var(--red);font-family:'DM Mono',monospace">${fOMR(repCost)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Net gain</div><div style="font-size:14px;font-weight:700;color:${netGain>0?"var(--green)":"var(--red)"};font-family:'DM Mono',monospace">${fOMR(netGain)}</div></div>
+    </div>`;
+
+  // Margin sim
+  const marginInc=Number(document.getElementById("sim-margin")?.value||5);
+  document.getElementById("sim-margin-val")&&(document.getElementById("sim-margin-val").textContent=`+${marginInc}%`);
+  const newMarginVal=totalWon*(curMarginPct+marginInc/100);
+  const marginGain=newMarginVal-curMarginVal;
+  const mgEl=document.getElementById("sim-margin-result");
+  if(mgEl)mgEl.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><div style="font-size:10px;color:var(--dim)">Current margin val</div><div style="font-size:14px;font-weight:700;color:var(--gold);font-family:'DM Mono',monospace">${fOMR(curMarginVal)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">New margin val</div><div style="font-size:14px;font-weight:700;color:var(--green);font-family:'DM Mono',monospace">${fOMR(newMarginVal)}</div></div>
+      <div style="grid-column:span 2"><div style="font-size:10px;color:var(--dim)">Additional profit per year</div><div style="font-size:18px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">+${fOMR(marginGain)}</div></div>
+    </div>`;
+
+  // Win rate sim
+  const wrInc=Number(document.getElementById("sim-winrate")?.value||10);
+  document.getElementById("sim-winrate-val")&&(document.getElementById("sim-winrate-val").textContent=`+${wrInc}%`);
+  const newWr=Math.min(wr+(wrInc/100),1);
+  const extraDeals=(newWr-wr)*ms.length;
+  const extraRev=extraDeals*avgDeal;
+  const wrEl=document.getElementById("sim-winrate-result");
+  if(wrEl)wrEl.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><div style="font-size:10px;color:var(--dim)">Current win rate</div><div style="font-size:16px;font-weight:700;color:var(--gold);font-family:'Playfair Display',serif">${(wr*100).toFixed(0)}%</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">New win rate</div><div style="font-size:16px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${(newWr*100).toFixed(0)}%</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Extra deals</div><div style="font-size:14px;font-weight:700;color:var(--blue);font-family:'DM Mono',monospace">+${Math.round(extraDeals)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Revenue impact</div><div style="font-size:14px;font-weight:700;color:var(--green);font-family:'DM Mono',monospace">+${fOMR(extraRev)}</div></div>
+    </div>`;
+
+  // Vendor sim
+  const vendor=document.getElementById("sim-vendor")?.value||"";
+  const vMtgsInc=Number(document.getElementById("sim-vendor-mtgs")?.value||5);
+  document.getElementById("sim-vendor-mtgs-val")&&(document.getElementById("sim-vendor-mtgs-val").textContent=`+${vMtgsInc}/month`);
+  const vClosed=closed.filter(m=>m.vendor===vendor);
+  const vAvgDeal=vClosed.length?vClosed.reduce((s,m)=>s+Number(m.value||0),0)/vClosed.length:avgDeal*1.2;
+  const vNewDeals=vMtgsInc*12*wr;
+  const vNewRev=vNewDeals*vAvgDeal;
+  const vEl=document.getElementById("sim-vendor-result");
+  if(vEl)vEl.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><div style="font-size:10px;color:var(--dim)">Avg deal (${vendor})</div><div style="font-size:14px;font-weight:700;color:var(--gold);font-family:'DM Mono',monospace">${fOMR(vAvgDeal)}</div></div>
+      <div><div style="font-size:10px;color:var(--dim)">Expected new deals</div><div style="font-size:14px;font-weight:700;color:var(--blue);font-family:'DM Mono',monospace">${Math.round(vNewDeals)}</div></div>
+      <div style="grid-column:span 2"><div style="font-size:10px;color:var(--dim)">Revenue impact (12 months)</div><div style="font-size:18px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">+${fOMR(vNewRev)}</div></div>
+    </div>`;
+
+  // Combined
+  const combined=newRevenue+extraRev+marginGain;
+  const combEl=document.getElementById("sim-combined");
+  if(combEl)combEl.innerHTML=`
+    ${[["Headcount",newRevenue,"var(--gold)"],["Win Rate",extraRev,"var(--blue)"],["Margin",marginGain,"var(--purple)"],["Total Impact",combined,"var(--green)"]].map(([l,v,c])=>`
+      <div style="background:${c}10;border:1px solid ${c}30;border-radius:10px;padding:16px;text-align:center">
+        <div style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">${l}</div>
+        <div style="font-size:20px;font-weight:700;color:${c};font-family:'Playfair Display',serif">${fOMR(v)}</div>
+        <div style="font-size:10px;color:var(--dim);margin-top:3px">${fUSD(omrUsd(v))}</div>
+      </div>`).join("")}
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// CUSTOMERS MODULE
+// ═══════════════════════════════════════════════════
+function rCustomers(){
+  const customers=gCust();
+  document.getElementById("v-customers").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Customers</div><div class="ph-sub">${customers.length} customers · Oman</div></div>
+      <button class="btn btn-p" onclick="openCustForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Customer</button>
+    </div>
+    <div class="card-flush">
+      <table class="tbl">
+        <thead><tr><th>Customer</th><th>Industry</th><th>Focal Point</th><th>Designation</th><th>Phone</th><th>Email</th><th>Meetings</th><th>Revenue</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${customers.length===0?`<tr><td colspan="9" style="padding:48px;text-align:center;color:var(--dim)">No customers yet — add your first</td></tr>`:
+            customers.map(c=>{
+              const cMtg=D.meetings.filter(m=>m.account===c.name);
+              const cRev=cMtg.filter(m=>m.stage==="Closed Won").reduce((s,m)=>s+Number(m.value||0),0);
+              return `<tr>
+                <td style="color:var(--text);font-weight:600">${c.name}</td>
+                <td style="color:var(--dim);font-size:11px">${c.industry||"—"}</td>
+                <td><div style="font-size:12px;color:var(--text)">${c.focalName||"—"}</div></td>
+                <td style="color:var(--dim);font-size:11px">${c.focalDesignation||"—"}</td>
+                <td>${c.focalPhone?`<a href="tel:${c.focalPhone}" style="color:var(--blue);font-size:11px;text-decoration:none">${c.focalPhone}</a>`:"—"}</td>
+                <td>${c.focalEmail?`<a href="mailto:${c.focalEmail}" style="color:var(--teal);font-size:11px;text-decoration:none">${c.focalEmail}</a>`:"—"}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--gold)">${cMtg.length}</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--green);font-size:11px">${fOMR(cRev)}</td>
+                <td><div style="display:flex;gap:4px">
+                  <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openCustForm('${c.id}')">${iEdit()}</button>
+                  ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delCust('${c.id}')">${iTrash()}</button>`:""}
+                </div></td>
+              </tr>`;
+            }).join("")
+          }
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openCustForm(id){
+  const c=id?gCust().find(x=>x.id===id):null;
+  const f=(k,d="")=>c?(c[k]??d):d;
+  showModal(`${c?"Edit":"New"} Customer`,`
+    <div class="fg">
+      <div class="f full"><label>Customer Name</label><input class="fi" id="cf-name" value="${f("name")}" placeholder="e.g. Bank Muscat"/></div>
+      <div class="f"><label>Industry</label><select class="fi" id="cf-ind"><option value="">Select…</option>${gInd().map(i=>`<option ${f("industry")===i?"selected":""}>${i}</option>`).join("")}</select></div>
+      <div class="f"><label>Country</label><input class="fi" value="Oman" readonly style="opacity:.6"/></div>
+      <div class="f full" style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">
+        <div style="font-size:10px;color:var(--gold);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Focal Point</div>
+      </div>
+      <div class="f"><label>Full Name</label><input class="fi" id="cf-fn" value="${f("focalName")}" placeholder="Full name"/></div>
+      <div class="f"><label>Designation</label><input class="fi" id="cf-fd" value="${f("focalDesignation")}" placeholder="e.g. IT Director"/></div>
+      <div class="f"><label>Mobile</label><input class="fi" id="cf-fp" value="${f("focalPhone")}" placeholder="+968 9X XXX XXXX" type="tel"/></div>
+      <div class="f"><label>Email</label><input class="fi" id="cf-fe" value="${f("focalEmail")}" placeholder="focal@company.om" type="email"/></div>
+      <div class="f full"><label>Notes</label><textarea class="fi" id="cf-notes" rows="2">${f("notes")}</textarea></div>
+      <div class="f full" style="display:flex;gap:9px;margin-top:3px">
+        <button class="btn btn-p" style="flex:1" onclick="saveCust('${id||""}')">${c?"Save Changes":"Add Customer"}</button>
+        <button class="btn btn-g" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  `,true);
+}
+
+async function saveCust(id){
+  const g=eid=>document.getElementById(eid)?.value||"";
+  const data={id:id||uid(),name:g("cf-name"),industry:g("cf-ind"),country:"Oman",focalName:g("cf-fn"),focalDesignation:g("cf-fd"),focalPhone:g("cf-fp"),focalEmail:g("cf-fe"),notes:g("cf-notes"),createdAt:id?(gCust().find(c=>c.id===id)||{}).createdAt||today():today()};
+  if(!data.name){toast("Customer name required","error");return;}
+  if(id){D.customers=D.customers.map(c=>c.id===id?data:c);}else{D.customers.push(data);}
+  closeModal(); await saveData(); toast(id?"Customer updated":"Customer added"); rCustomers();
+}
+
+async function delCust(id){
+  if(!confirm("Delete this customer?"))return;
+  D.customers=D.customers.filter(c=>c.id!==id);
+  await saveData(); toast("Deleted"); rCustomers();
+}
+
+// ═══════════════════════════════════════════════════
+// VENDORS MODULE
+// ═══════════════════════════════════════════════════
+function rVendors(){
+  const vendors=gVend();
+  document.getElementById("v-vendors").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Vendors</div><div class="ph-sub">${vendors.length} vendors</div></div>
+      ${CU.role!=="rep"?`<button class="btn btn-p" onclick="openVendForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Vendor</button>`:""}
+    </div>
+    <div class="card-flush">
+      <table class="tbl">
+        <thead><tr><th>Vendor</th><th>Category</th><th>Contact</th><th>Email</th><th>Website</th><th>Meetings</th><th>Revenue</th>${CU.role!=="rep"?"<th>Actions</th>":""}</tr></thead>
+        <tbody>
+          ${vendors.map(v=>{
+            const vn=v.name||v;
+            const vm=D.meetings.filter(m=>m.vendor===vn);
+            const vr=vm.filter(m=>m.stage==="Closed Won").reduce((s,m)=>s+Number(m.value||0),0);
+            return `<tr>
+              <td style="color:var(--text);font-weight:600">${vn}</td>
+              <td style="color:var(--dim);font-size:11px">${v.category||"Cybersecurity"}</td>
+              <td style="color:var(--muted);font-size:11px">${v.contact||"—"}</td>
+              <td>${v.contactEmail?`<a href="mailto:${v.contactEmail}" style="color:var(--teal);font-size:11px;text-decoration:none">${v.contactEmail}</a>`:"—"}</td>
+              <td>${v.website?`<a href="https://${v.website}" target="_blank" style="color:var(--blue);font-size:11px;text-decoration:none">${v.website}</a>`:"—"}</td>
+              <td style="font-family:'DM Mono',monospace;color:var(--gold)">${vm.length}</td>
+              <td style="font-family:'DM Mono',monospace;color:var(--green);font-size:11px">${fOMR(vr)}</td>
+              ${CU.role!=="rep"?`<td><div style="display:flex;gap:4px">
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openVendForm('${v.id||vn}')">${iEdit()}</button>
+                ${CU.role==="admin"&&v.id?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delVend('${v.id}')">${iTrash()}</button>`:""}
+              </div></td>`:""}
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openVendForm(id){
+  const existing=D.vendors.find(v=>v.id===id);
+  const v=existing||null;
+  const f=(k,d="")=>v?(v[k]??d):d;
+  showModal(`${v?"Edit":"New"} Vendor`,`
+    <div class="fg">
+      <div class="f full"><label>Vendor Name</label><input class="fi" id="vf-name" value="${f("name",id&&!existing?id:"")}" placeholder="e.g. Palo Alto Networks"/></div>
+      <div class="f"><label>Category</label><input class="fi" id="vf-cat" value="${f("category","Cybersecurity")}" placeholder="e.g. Cybersecurity"/></div>
+      <div class="f"><label>Website</label><input class="fi" id="vf-web" value="${f("website")}" placeholder="e.g. paloaltonetworks.com"/></div>
+      <div class="f"><label>Contact Person</label><input class="fi" id="vf-con" value="${f("contact")}" placeholder="Vendor rep name"/></div>
+      <div class="f"><label>Contact Email</label><input class="fi" id="vf-email" value="${f("contactEmail")}" placeholder="rep@vendor.com" type="email"/></div>
+      <div class="f full"><label>Notes / Partnership Level</label><textarea class="fi" id="vf-notes" rows="2">${f("notes")}</textarea></div>
+      <div class="f full" style="display:flex;gap:9px;margin-top:3px">
+        <button class="btn btn-p" style="flex:1" onclick="saveVend('${existing?id:""}')">Save Vendor</button>
+        <button class="btn btn-g" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  `,true);
+}
+
+async function saveVend(id){
+  const g=eid=>document.getElementById(eid)?.value||"";
+  const data={id:id||uid(),name:g("vf-name"),category:g("vf-cat"),website:g("vf-web"),contact:g("vf-con"),contactEmail:g("vf-email"),notes:g("vf-notes")};
+  if(!data.name){toast("Vendor name required","error");return;}
+  if(id){D.vendors=D.vendors.map(v=>v.id===id?data:v);}else{if(!D.vendors.find(v=>v.name===data.name))D.vendors.push(data);}
+  closeModal(); await saveData(); toast("Vendor saved"); rVendors();
+}
+
+async function delVend(id){
+  if(!confirm("Delete this vendor?"))return;
+  D.vendors=D.vendors.filter(v=>v.id!==id);
+  await saveData(); toast("Deleted"); rVendors();
+}
+
+// ═══════════════════════════════════════════════════
+// USERS MODULE
+// ═══════════════════════════════════════════════════
+function rUsers(){
+  if(CU.role!=="admin"){document.getElementById("v-users").innerHTML=`<div style="padding:48px;text-align:center;color:var(--dim)">Admin access required</div>`;return;}
+  document.getElementById("v-users").innerHTML=`
+    <div class="ph">
+      <div><div class="ph-title">Users & Roles</div><div class="ph-sub">${D.users.length} users · ${D.users.filter(u=>u.active!==false).length} active</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-g btn-s" onclick="openIndustryMgr()" style="color:var(--gold);border-color:var(--gold-border)">⚙ Industries</button>
+        <button class="btn btn-p" onclick="openUserForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New User</button>
+      </div>
+    </div>
+    <div class="g3" style="margin-bottom:14px">
+      ${["admin","manager","rep","presales"].map(r=>`<div class="card" style="text-align:center">
+        <div style="font-size:22px;font-weight:700;font-family:'Playfair Display',serif;color:${ROLE_C[r]}">${D.users.filter(u=>u.role===r).length}</div>
+        <div style="font-size:10px;color:var(--dim);text-transform:capitalize;font-family:'DM Mono',monospace">${r}s</div>
+      </div>`).join("")}
+    </div>
+    <div class="card-flush">
+      <table class="tbl">
+        <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Region</th><th>Monthly Target</th><th>Commission</th><th>Meetings</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${D.users.map(u=>`<tr>
+            <td><div style="display:flex;align-items:center;gap:9px">
+              <div class="av" style="width:30px;height:30px;background:linear-gradient(135deg,${ROLE_C[u.role]||"#888"},#1a3a6e);font-size:11px;color:#fff">${(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
+              <span style="font-weight:600;color:var(--text)">${u.name}</span>
+            </div></td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${u.email}</td>
+            <td>${rbadge(u.role)}</td>
+            <td style="color:var(--dim);font-size:11px">${u.region||"Oman"}</td>
+            <td style="font-family:'DM Mono',monospace;color:var(--gold);font-size:11px">${fOMR(u.target_monthly||50000)}</td>
+            <td style="font-family:'DM Mono',monospace;color:var(--muted);font-size:11px">${u.commission_rate||3}%</td>
+            <td style="font-family:'DM Mono',monospace;font-weight:600">${D.meetings.filter(m=>m.repEmail===u.email).length}</td>
+            <td><span style="font-size:10px;padding:3px 8px;border-radius:20px;background:${u.active!==false?"rgba(61,214,140,.1)":"rgba(255,255,255,.05)"};color:${u.active!==false?"var(--green)":"var(--dim)"};border:1px solid ${u.active!==false?"rgba(61,214,140,.25)":"rgba(255,255,255,.1)"}">${u.active!==false?"Active":"Inactive"}</span></td>
+            <td><div style="display:flex;gap:4px">
+              <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openUserForm('${u.id}')">${iEdit()}</button>
+              <button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delUser('${u.id}')">${iTrash()}</button>
+            </div></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openUserForm(id){
+  const u=id?D.users.find(x=>x.id===id):null;
+  const f=(k,d="")=>u?(u[k]??d):d;
+  showModal(`${u?"Edit":"New"} User`,`
+    <div class="fg">
+      <div class="f full"><label>Full Name</label><input class="fi" id="uf-name" value="${f("name")}" placeholder="First Last"/></div>
+      <div class="f"><label>Email (M365)</label><input class="fi" id="uf-email" value="${f("email")}" placeholder="user@majants.onmicrosoft.com" type="email"/></div>
+      <div class="f"><label>Role</label><select class="fi" id="uf-role">${["admin","manager","rep","presales"].map(r=>`<option value="${r}" ${f("role","rep")===r?"selected":""}>${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join("")}</select></div>
+      <div class="f"><label>Region</label><input class="fi" id="uf-region" value="${f("region","Oman")}" placeholder="Oman"/></div>
+      <div class="f"><label>Monthly Target (OMR)</label><input class="fi" id="uf-target" value="${f("target_monthly",50000)}" type="number" placeholder="50000"/></div>
+      <div class="f"><label>Commission Rate %</label><input class="fi" id="uf-comm" value="${f("commission_rate",3)}" type="number" step="0.5" placeholder="3"/></div>
+      <div class="f"><label>Status</label><select class="fi" id="uf-active"><option value="true" ${f("active",true)===true||f("active",true)==="true"?"selected":""}>Active</option><option value="false" ${f("active",true)===false||f("active",true)==="false"?"selected":""}>Inactive</option></select></div>
+      <div class="f full" style="display:flex;gap:9px;margin-top:3px">
+        <button class="btn btn-p" style="flex:1" onclick="saveUser('${id||""}')">${u?"Save Changes":"Create User"}</button>
+        <button class="btn btn-g" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  `);
+}
+
+async function saveUser(id){
+  const g=eid=>document.getElementById(eid)?.value||"";
+  const data={id:id||uid(),name:g("uf-name"),email:g("uf-email").toLowerCase(),role:g("uf-role"),region:g("uf-region"),target_monthly:Number(g("uf-target")||50000),commission_rate:Number(g("uf-comm")||3),active:g("uf-active")==="true",createdAt:id?(D.users.find(u=>u.id===id)||{}).createdAt||today():today()};
+  if(id){D.users=D.users.map(u=>u.id===id?data:u);}else{D.users.push(data);}
+  closeModal(); await saveData(); toast(id?"User updated":"User created"); rUsers();
+}
+
+async function delUser(id){
+  if(!confirm("Delete this user?"))return;
+  D.users=D.users.filter(u=>u.id!==id);
+  await saveData(); toast("Deleted"); rUsers();
+}
+
+function openIndustryMgr(){
+  const inds=gInd();
+  showModal("Manage Industries",`
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input class="fi" id="ind-new" placeholder="New industry…" style="flex:1"/>
+      <button class="btn btn-p btn-s" onclick="addIndustry()">Add</button>
+    </div>
+    <div>${inds.map(i=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(255,255,255,.03);border-radius:7px;margin-bottom:5px">
+      <span style="font-size:13px;color:var(--text)">${i}</span>
+      ${D.industries.includes(i)?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="removeInd('${i}')">${iTrash()}</button>`:`<span style="font-size:10px;color:var(--dim)">Default</span>`}
+    </div>`).join("")}</div>
+  `,"narrow");
+}
+
+async function addIndustry(){
+  const v=document.getElementById("ind-new")?.value?.trim();
+  if(!v)return;
+  if(!D.industries.includes(v)){D.industries.push(v);await saveData();toast("Added");}
+  closeModal();openIndustryMgr();
+}
+
+async function removeInd(name){
+  D.industries=D.industries.filter(i=>i!==name);
+  await saveData();toast("Removed");closeModal();openIndustryMgr();
+}
+
+// ═══════════════════════════════════════════════════
+// MEETING FORM
+// ═══════════════════════════════════════════════════
+function openMeetingForm(id){
+  const m=id?D.meetings.find(x=>x.id===id):null;
+  const f=(k,d="")=>m?(m[k]??d):d;
+  const repOpts=CU.role!=="rep"&&CU.role!=="presales"
+    ?D.users.map(u=>`<option value="${u.email}|${u.name}" ${m&&m.repEmail===u.email?"selected":""}>${u.name}</option>`).join(""):"";
+
+  showModal(`${m?"Edit":"Log New"} Meeting`,`
+    <div class="fg">
+      ${CU.role!=="rep"&&CU.role!=="presales"?`<div class="f"><label>Sales Rep</label><select class="fi" id="mf-rep"><option value="">Select rep…</option>${repOpts}</select></div>`:""}
+      <div class="f"><label>Customer</label>
+        <select class="fi" id="mf-acct"><option value="">Select customer…</option>${gCust().map(c=>`<option value="${c.name}" ${f("account")===c.name?"selected":""}>${c.name}</option>`).join("")}</select>
+        <div style="font-size:11px;color:var(--gold);margin-top:3px;cursor:pointer" onclick="closeModal();renderView('customers')">+ Add new customer →</div>
+      </div>
+      <div class="f"><label>Vendor Covered</label>
+        <select class="fi" id="mf-vend"><option value="">Select vendor…</option>${gVend().map(v=>`<option value="${v.name||v}" ${f("vendor")===(v.name||v)?"selected":""}>${v.name||v}</option>`).join("")}</select>
+        <div style="font-size:11px;color:var(--gold);margin-top:3px;cursor:pointer" onclick="closeModal();renderView('vendors')">+ Add new vendor →</div>
+      </div>
+      <div class="f"><label>Industry</label><select class="fi" id="mf-ind"><option value="">Select…</option>${gInd().map(i=>`<option ${f("industry")===i?"selected":""}>${i}</option>`).join("")}</select></div>
+      <div class="f"><label>Meeting Type</label><select class="fi" id="mf-type"><option value="">Select…</option>${TYPES.map(t=>`<option ${f("type")===t?"selected":""}>${t}</option>`).join("")}</select></div>
+      <div class="f"><label>Deal Stage</label><select class="fi" id="mf-stage">${STAGES.map(s=>`<option ${f("stage","Discovery")===s?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="f"><label>Priority</label><select class="fi" id="mf-prio">${PRIORITIES.map(p=>`<option ${f("priority","Medium")===p?"selected":""}>${p}</option>`).join("")}</select></div>
+      <div class="f"><label>Outcome</label><select class="fi" id="mf-out"><option value="">Select…</option>${OUTCOMES.map(o=>`<option ${f("outcome")===o?"selected":""}>${o}</option>`).join("")}</select></div>
+      <div class="f"><label>Opportunity Value (OMR)</label>
+        <input class="fi" type="number" id="mf-val" value="${f("value")}" placeholder="e.g. 50000" oninput="document.getElementById('mf-val-usd').textContent=this.value?'≈ '+fUSD(omrUsd(Number(this.value))):''"/>
+        <div id="mf-val-usd" style="font-size:10px;color:var(--dim);margin-top:2px;font-family:'DM Mono',monospace">${f("value")?"≈ "+fUSD(omrUsd(Number(f("value")))):""}</div>
+      </div>
+      <div class="f"><label>Margin % (estimated)</label><input class="fi" type="number" id="mf-margin" value="${f("margin","20")}" placeholder="e.g. 25" min="0" max="100"/></div>
+      <div class="f"><label>Meeting Date</label><input class="fi" type="date" id="mf-date" value="${f("date",today())}"/></div>
+      <div class="f"><label>Duration (mins)</label><select class="fi" id="mf-dur">${[30,45,60,90,120].map(d=>`<option ${f("duration",60)==d?"selected":""}>${d}</option>`).join("")}</select></div>
+      <div class="f"><label>Attendees (client side)</label><input class="fi" type="number" id="mf-att" value="${f("attended",2)}" min="1" max="20"/></div>
+      <div class="f"><label>Quality Score (1–5)</label><select class="fi" id="mf-score">${[1,2,3,4,5].map(n=>`<option ${f("score",3)==n?"selected":""}>${n}</option>`).join("")}</select></div>
+
+      <div class="f full" style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">
+        <div style="font-size:10px;color:var(--gold);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Revenue Attribution %</div>
+      </div>
+      <div class="f"><label>Sales %</label><input class="fi" type="number" id="mf-attr-s" value="${f("attr_sales",60)}" min="0" max="100" placeholder="60"/></div>
+      <div class="f"><label>Presales %</label><input class="fi" type="number" id="mf-attr-p" value="${f("attr_presales",20)}" min="0" max="100" placeholder="20"/></div>
+      <div class="f"><label>Vendor %</label><input class="fi" type="number" id="mf-attr-v" value="${f("attr_vendor",15)}" min="0" max="100" placeholder="15"/></div>
+      <div class="f"><label>GSI %</label><input class="fi" type="number" id="mf-attr-g" value="${f("attr_gsi",5)}" min="0" max="100" placeholder="5"/></div>
+
+      <div class="f"><label>GSI Partner (if applicable)</label><select class="fi" id="mf-gsi"><option value="">None</option>${(D.gsi_partners||[]).map(g=>`<option ${f("gsi_partner")===g?"selected":""}>${g}</option>`).join("")}</select></div>
+      <div class="f"><label>Deal Source</label><select class="fi" id="mf-src"><option value="">Select…</option>${["Direct","GSI-led","Vendor-led","Joint","Inbound","Referral"].map(s=>`<option ${f("deal_source")===s?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="f"><label>Strategic Deal</label><select class="fi" id="mf-strat"><option value="false" ${!f("strategic_flag")?"selected":""}>No</option><option value="true" ${f("strategic_flag")?"selected":""}>Yes — Strategic</option></select></div>
+
+      <div class="f full"><label>Meeting Notes</label><textarea class="fi" id="mf-notes" rows="3" placeholder="Discussion points, pain points, decisions, sentiment…">${f("notes")}</textarea></div>
+      <div class="f"><label>Next Action</label><input class="fi" id="mf-na" value="${f("nextAction")}" placeholder="e.g. Send proposal"/></div>
+      <div class="f"><label>Next Action Due</label><input class="fi" type="date" id="mf-nd" value="${f("nextDate")}"/></div>
+      <div class="f full" style="display:flex;gap:9px;margin-top:3px">
+        <button class="btn btn-p" style="flex:1" onclick="saveMeeting('${id||""}')">${m?"Save Changes":"Log Meeting"}</button>
+        <button class="btn btn-g" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  `,true);
+}
+
+async function saveMeeting(id){
+  const g=eid=>document.getElementById(eid)?.value||"";
+  let repEmail=CU.email, repName=CU.name;
+  if(CU.role!=="rep"&&CU.role!=="presales"){
+    const rv=g("mf-rep"); if(rv){const parts=rv.split("|");repEmail=parts[0];repName=parts[1]||repEmail;}
+  }
+  const data={
+    id:id||uid(),repEmail,repName,
+    account:g("mf-acct"),industry:g("mf-ind"),vendor:g("mf-vend"),country:"Oman",
+    type:g("mf-type"),stage:g("mf-stage"),priority:g("mf-prio"),outcome:g("mf-out"),
+    value:Number(g("mf-val")||0),margin:Number(g("mf-margin")||0),
+    date:g("mf-date"),duration:Number(g("mf-dur")||60),attended:Number(g("mf-att")||1),score:Number(g("mf-score")||3),
+    attr_sales:Number(g("mf-attr-s")||60),attr_presales:Number(g("mf-attr-p")||20),attr_vendor:Number(g("mf-attr-v")||15),attr_gsi:Number(g("mf-attr-g")||5),
+    gsi_partner:g("mf-gsi"),deal_source:g("mf-src"),strategic_flag:g("mf-strat")==="true",
+    notes:g("mf-notes"),nextAction:g("mf-na"),nextDate:g("mf-nd"),
+    updatedAt:today(),createdAt:id?(D.meetings.find(m=>m.id===id)||{}).createdAt||today():today()
+  };
+  if(id){D.meetings=D.meetings.map(m=>m.id===id?data:m);}else{D.meetings.unshift(data);}
+  closeModal(); await saveData(); toast(id?"Meeting updated":"Meeting logged ✓");
+  buildSidebar();
+  // refresh current view
+  const active=VIEWS.find(v=>document.getElementById(`v-${v}`)?.style.display==="block");
+  if(active)renderView(active);
+}
+
+function viewMeeting(id){
+  const m=D.meetings.find(x=>x.id===id); if(!m)return;
+  const ov=isOD(m);
+  showModal("Meeting Detail",`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:19px;font-weight:700;font-family:'Playfair Display',serif;margin-bottom:7px">${m.account}</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">${sbadge(m.stage)}<span class="badge" style="background:rgba(75,156,245,.12);color:var(--blue);border:1px solid rgba(75,156,245,.25)">${m.type||"—"}</span>${m.strategic_flag?`<span class="badge" style="background:rgba(200,168,75,.15);color:var(--gold);border:1px solid var(--gold-border)">⭐ Strategic</span>`:""}</div>
+      </div>
+      <div style="display:flex;gap:7px">
+        ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold)" onclick="closeModal();openMeetingForm('${m.id}')">${iEdit()} Edit</button>`:""}
+        ${CU.role==="admin"?`<button class="btn btn-s btn-d" onclick="delMeeting('${m.id}');closeModal()">${iTrash()} Delete</button>`:""}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:16px">
+      ${[["Rep",m.repName],["Date",fDate(m.date)],["Duration",`${m.duration}m`],["Vendor",m.vendor||"—"],["Industry",m.industry||"—"],["Source",m.deal_source||"—"],["GSI Partner",m.gsi_partner||"None"],["Attendees",m.attended],["Score",`${m.score}/5`]].map(([k,v])=>`
+        <div style="background:rgba(255,255,255,.03);border-radius:8px;padding:9px 12px">
+          <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:2px">${k}</div>
+          <div style="font-size:12px;color:var(--text);font-weight:500">${v}</div>
+        </div>`).join("")}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px">
+      <div style="background:rgba(61,214,140,.06);border:1px solid rgba(61,214,140,.2);border-radius:9px;padding:12px">
+        <div style="font-size:10px;color:var(--green);font-family:'DM Mono',monospace;text-transform:uppercase;margin-bottom:4px">Value</div>
+        <div style="font-size:18px;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${fOMR(m.value)}</div>
+        <div style="font-size:11px;color:var(--dim)">${fUSD(omrUsd(m.value))}</div>
+      </div>
+      <div style="background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.2);border-radius:9px;padding:12px">
+        <div style="font-size:10px;color:var(--purple);font-family:'DM Mono',monospace;text-transform:uppercase;margin-bottom:4px">Margin</div>
+        <div style="font-size:18px;font-weight:700;color:var(--purple);font-family:'Playfair Display',serif">${m.margin||"—"}%</div>
+        <div style="font-size:11px;color:var(--dim)">${m.margin?fOMR(Number(m.value)*Number(m.margin)/100):"—"}</div>
+      </div>
+    </div>
+    <div style="background:rgba(255,255,255,.03);border-radius:9px;padding:12px;margin-bottom:12px">
+      <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:8px">Revenue Attribution</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        ${[["Sales",m.attr_sales||60,"var(--gold)"],["Presales",m.attr_presales||20,"var(--blue)"],["Vendor",m.attr_vendor||15,"var(--purple)"],["GSI",m.attr_gsi||5,"var(--green)"]].map(([l,v,c])=>`<div style="text-align:center"><div style="font-size:16px;font-weight:700;color:${c};font-family:'Playfair Display',serif">${v}%</div><div style="font-size:10px;color:var(--dim)">${l}</div></div>`).join("")}
+      </div>
+    </div>
+    ${m.notes?`<div style="background:rgba(255,255,255,.03);border-radius:9px;padding:12px;margin-bottom:12px"><div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Notes</div><div style="font-size:13px;color:var(--muted);line-height:1.6">${m.notes}</div></div>`:""}
+    ${m.nextAction?`<div style="background:var(--gold-dim);border:1px solid var(--gold-border);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Next Action</div><div style="font-size:13px;color:var(--text);font-weight:500">${m.nextAction}</div><div style="font-size:11px;color:var(--muted);margin-top:3px">Due: ${fDate(m.nextDate)}${ov?` <span style="color:var(--red);font-weight:600">· OVERDUE</span>`:""}</div></div>`:""}
+  `,true);
+}
+
+async function delMeeting(id){
+  if(!confirm("Delete this meeting?"))return;
+  D.meetings=D.meetings.filter(m=>m.id!==id);
+  await saveData(); toast("Deleted"); buildSidebar();
+  const active=VIEWS.find(v=>document.getElementById(`v-${v}`)?.style.display==="block");
+  if(active)renderView(active);
+}
+
+function canEdit(m){ return CU.role==="admin"||CU.role==="manager"||m.repEmail===CU.email; }
+
+function openDealForm(){ openMeetingForm(); } // alias
+
+// ═══════════════════════════════════════════════════
+// UTILITY: FILTER MEETINGS
+// ═══════════════════════════════════════════════════
+function filterMeetings(ms,f){
+  return ms.filter(m=>(
+    (!f.search||m.account.toLowerCase().includes(f.search.toLowerCase())||(m.notes||"").toLowerCase().includes(f.search.toLowerCase())||(m.repName||"").toLowerCase().includes(f.search.toLowerCase()))&&
+    (!f.stage||m.stage===f.stage)&&(!f.vendor||m.vendor===f.vendor)&&(!f.priority||m.priority===f.priority)&&(!f.rep||m.repEmail===f.rep)
+  ));
+}
+
+// ═══════════════════════════════════════════════════
+// MONTHLY TARGET
+// ═══════════════════════════════════════════════════
+function getMonthTarget(){
+  const ms=myMtg();
+  if(CU.role==="rep"||CU.role==="presales"){
+    const u=D.users.find(u=>u.email===CU.email);
+    return u?.target_monthly||50000;
+  }
+  return D.users.reduce((s,u)=>s+(u.target_monthly||50000),0);
+}
+
+// ═══════════════════════════════════════════════════
+// CHART HELPERS
+// ═══════════════════════════════════════════════════
+function donut(data,title){
+  if(!data.length)return`<div class="stitle">${title}</div><div style="font-size:13px;color:var(--dim)">No data</div>`;
+  const total=data.reduce((a,b)=>a+b.v,0)||1;
+  const cx=68,r=50;
+  let angle=-Math.PI/2;
+  const slices=data.map((d,i)=>{
+    const pct2=d.v/total,a1=angle,a2=angle+pct2*2*Math.PI; angle=a2;
+    const x1=cx+r*Math.cos(a1),y1=cx+r*Math.sin(a1),x2=cx+r*Math.cos(a2),y2=cx+r*Math.sin(a2);
+    return `<path d="M${cx},${cx} L${x1},${y1} A${r},${r} 0 ${pct2>.5?1:0},1 ${x2},${y2} Z" fill="${CHART_C[i%CHART_C.length]}" opacity=".85"/>`;
+  });
+  return `<div class="stitle">${title}</div>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div style="position:relative;flex-shrink:0">
+        <svg width="${cx*2}" height="${cx*2}" viewBox="0 0 ${cx*2} ${cx*2}">
+          <circle cx="${cx}" cy="${cx}" r="${r}" fill="rgba(255,255,255,.04)"/>
+          ${slices.join("")}
+          <circle cx="${cx}" cy="${cx}" r="${r*.56}" fill="var(--card)"/>
+        </svg>
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+          <div style="font-size:19px;font-weight:700;font-family:'Playfair Display',serif">${total}</div>
+          <div style="font-size:9px;color:var(--dim)">Total</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:90px">
+        ${data.slice(0,7).map((d,i)=>`<div style="display:flex;align-items:center;gap:6px"><div style="width:7px;height:7px;border-radius:2px;background:${CHART_C[i%CHART_C.length]};flex-shrink:0"></div><span style="font-size:11px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.k}</span><span style="font-size:11px;color:var(--text);font-weight:600;font-family:'DM Mono',monospace">${d.v}</span></div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function barChart(data,title,color="var(--gold)",valFmt=v=>v){
+  if(!data.length)return`<div class="stitle">${title}</div><div style="font-size:13px;color:var(--dim)">No data yet</div>`;
+  const max=Math.max(...data.map(d=>d.v),1);
+  return `<div class="stitle">${title}</div>
+    ${data.map(d=>`<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+        <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${d.k}</span>
+        <span style="font-size:11px;color:${color};font-weight:600;font-family:'DM Mono',monospace;flex-shrink:0;margin-left:8px">${valFmt(d.v)}</span>
+      </div>
+      <div class="mbar"><div class="mbar-fill" style="width:${(d.v/max)*100}%;background:${color}"></div></div>
+    </div>`).join("")}`;
+}
+
+function weekBars(meetings){
+  const weeks=Array.from({length:12},(_,i)=>{
+    const d=new Date(); d.setDate(d.getDate()-(11-i)*7);
+    const s=d.toISOString().split("T")[0];
+    const nd=new Date(d); nd.setDate(nd.getDate()+7);
+    const e=nd.toISOString().split("T")[0];
+    return {label:`W${i+1}`,count:meetings.filter(m=>m.date>=s&&m.date<e).length};
+  });
+  const max=Math.max(...weeks.map(w=>w.count),1);
+  return `<div style="display:flex;align-items:flex-end;gap:2px;height:52px">
+    ${weeks.map(w=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="${w.count} meetings">
+      <div style="width:100%;height:${(w.count/max)*44}px;background:linear-gradient(180deg,var(--gold),#9a7520);border-radius:2px 2px 0 0;min-height:${w.count?2:0}px;transition:height .4s"></div>
+      <div style="font-size:8px;color:var(--dim);font-family:'DM Mono',monospace">${w.label}</div>
+    </div>`).join("")}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// UI PRIMITIVES
+// ═══════════════════════════════════════════════════
+function kpi(label,value,sub,accent,icon){
+  return `<div class="kpi">
+    <div class="kpi-glow" style="background:${accent}"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div class="kpi-label">${label}</div>
+      <div style="color:${accent};width:16px;height:16px;opacity:.8;flex-shrink:0">${icon}</div>
+    </div>
+    <div class="kpi-value">${value}</div>
+    <div class="kpi-sub">${sub}</div>
+  </div>`;
+}
+function sbadge(s){const c=STAGE_C[s]||"rgba(255,255,255,.15)";return`<span class="badge" style="background:${c}18;color:${c};border:1px solid ${c}30">${s}</span>`;}
+function rbadge(r){const c=ROLE_C[r]||"var(--muted)";return`<span class="badge" style="background:${c}15;color:${c};border:1px solid ${c}28;font-size:10px;padding:2px 7px">${(r||"").charAt(0).toUpperCase()+(r||"").slice(1)}</span>`;}
+function stars(n){n=Number(n||0);return`<div class="stars">${[1,2,3,4,5].map(i=>`<svg width="11" height="11" viewBox="0 0 24 24" fill="${i<=n?"currentColor":"none"}" stroke="currentColor" stroke-width="1.8" style="opacity:${i<=n?1:.2}"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`).join("")}</div>`;}
+
+// ═══════════════════════════════════════════════════
+// MODAL
+// ═══════════════════════════════════════════════════
+function showModal(title,body,wide,narrow){
+  document.getElementById("modal-root").innerHTML=`
+    <div class="mo" onclick="if(event.target===this)closeModal()">
+      <div class="mo-box${wide?" wide":narrow?" narrow":""}">
+        <div class="mo-hdr">
+          <div class="mo-title">${title}</div>
+          <button class="mo-close" onclick="closeModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        ${body}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById("modal-root").innerHTML="";}
+
+// ═══════════════════════════════════════════════════
+// ICONS
+// ═══════════════════════════════════════════════════
+const svg=(d,w=24)=>`<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${d}</svg>`;
+const iCmd  =()=>svg(`<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>`,18);
+const iSim  =()=>svg(`<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`,18);
+const iPipe =()=>svg(`<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>`,18);
+const iRev  =()=>svg(`<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>`,18);
+const iMarg =()=>svg(`<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`,18);
+const iCash =()=>svg(`<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>`,18);
+const iList =()=>svg(`<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>`,18);
+const iTroph=()=>svg(`<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>`,18);
+const iAcct =()=>svg(`<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`,18);
+const iCust =()=>svg(`<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,18);
+const iVend =()=>svg(`<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>`,18);
+const iUsers=()=>svg(`<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>`,18);
+const iFlag =()=>svg(`<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>`,18);
+const iAlert=()=>svg(`<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`,18);
+const iEdit =()=>svg(`<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>`,14);
+const iTrash=()=>svg(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>`,14);
+const iEye  =()=>svg(`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`,14);
+const iDown =()=>svg(`<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/>`,18);
+
+// ═══════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════
+(async()=>{
+  await msalApp.initialize();
+  try{
+    const r=await msalApp.handleRedirectPromise();
+    if(r&&r.account){await initUser(r.account);return;}
+  }catch(e){console.error(e);}
+  const accs=msalApp.getAllAccounts();
+  if(accs.length>0){try{await initUser(accs[0]);}catch(e){console.error(e);}}
+})();
+</script>
+</body>
+</html>
