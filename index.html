@@ -3,8 +3,26 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' https://alcdn.msauth.net;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src 'self' https://fonts.gstatic.com data:;
+  img-src 'self' data: blob:;
+  connect-src 'self' https://login.microsoftonline.com https://login.live.com https://graph.microsoft.com https://*.onmicrosoft.com;
+  frame-src https://login.microsoftonline.com https://login.live.com;
+  form-action 'self' https://login.microsoftonline.com;
+  base-uri 'self';
+  object-src 'none';
+"/>
+<meta name="referrer" content="strict-origin-when-cross-origin"/>
+<meta http-equiv="X-Content-Type-Options" content="nosniff"/>
+<meta name="robots" content="noindex,nofollow"/>
 <title>Majan Technology — Revenue Command</title>
-<script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+<!-- MSAL Browser v3 (initialize() is required from v3.x onward) — pinned for supply-chain integrity -->
+<script src="https://alcdn.msauth.net/browser/3.27.0/js/msal-browser.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -237,16 +255,44 @@ const SCOPES    = ["User.Read","Files.ReadWrite","Sites.ReadWrite.All"];
 const FILE_NAME = "MajanERP_v2.json";
 const OMR_RATE  = 0.385; // 1 USD = 0.385 OMR (fixed peg)
 
-const ROLE_MAP = {
-  "anm@majants.onmicrosoft.com":       "admin",
-  "aryantale@majants.onmicrosoft.com": "admin",
-};
+// Bootstrap admins: only used on first sign-in to seed D.role_map in OneDrive.
+// After first save, the source of truth is D.role_map (managed via Admin > Role Assignment).
+const BOOTSTRAP_ADMINS = [
+  "anm@majants.onmicrosoft.com",
+  "aryantale@majants.onmicrosoft.com",
+];
+
+// Stable redirect URI: strip query AND hash so MSAL always lands on the same registered URL.
+// Must exactly match a "Single-page application" redirect URI in Azure App Registration.
+const REDIRECT_URI = `${window.location.origin}${window.location.pathname}`;
 
 const msalCfg = {
-  auth:{ clientId:CLIENT_ID, authority:`https://login.microsoftonline.com/${TENANT_ID}`, redirectUri:window.location.href.split("?")[0] },
-  cache:{ cacheLocation:"sessionStorage" }
+  auth:{
+    clientId: CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+    redirectUri: REDIRECT_URI,
+    postLogoutRedirectUri: REDIRECT_URI,
+    navigateToLoginRequestUrl: false
+  },
+  cache:{ cacheLocation:"sessionStorage", storeAuthStateInCookie:false },
+  system:{
+    allowNativeBroker:false,
+    loggerOptions:{ piiLoggingEnabled:false, logLevel:0 } // Error-only, no PII
+  }
 };
-const msalApp = new msal.PublicClientApplication(msalCfg);
+
+// Guard: if the MSAL CDN is blocked (CSP, network), surface a clear error instead of
+// throwing an opaque "msal is not defined" later.
+let msalApp = null;
+try {
+  if (typeof msal === "undefined" || !msal.PublicClientApplication) {
+    throw new Error("Microsoft sign-in library failed to load. Check your network or CSP settings.");
+  }
+  msalApp = new msal.PublicClientApplication(msalCfg);
+} catch (e) {
+  console.error("[MSAL init]", e);
+  window.__MSAL_INIT_ERROR__ = e.message || String(e);
+}
 
 let CU = null; // current user
 let GT = null; // graph token
@@ -274,6 +320,46 @@ const CHART_C  = ["#C8A84B","#4B9CF5","#8B5CF6","#3DD68C","#F59E0B","#14B8A6","#
 // ═══════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════
+// HTML-escape: ALWAYS wrap user-controlled strings before injecting into innerHTML
+// to prevent stored XSS via customer/vendor/account/notes/etc fields.
+const esc = (s) => {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/`/g, "&#96;");
+};
+// Use for values placed inside attribute="..." contexts (a stricter subset of esc).
+const escAttr = (s) => esc(s);
+// Sanitize id-like strings used inline in onclick="...('${id}')" handlers — only allow
+// the alphabet our uid() generator produces, so a malicious id can't break out of quotes.
+const escId = (s) => String(s ?? "").replace(/[^a-zA-Z0-9_\-]/g, "");
+
+// Build a safe https:// link. Strips any pre-existing scheme to defeat javascript:, data:, vbscript:.
+// Returns "" if input is empty or contains characters not valid in a hostname/path.
+const safeUrl = (raw) => {
+  const s = String(raw ?? "").trim();
+  if(!s) return "";
+  // Strip leading scheme(s) — we always re-prefix https://
+  const stripped = s.replace(/^[a-z][a-z0-9+\-.]*:\/*/i, "");
+  // Allow only chars valid in hostnames + paths + queries.
+  if(!/^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$/.test(stripped)) return "";
+  return `https://${stripped}`;
+};
+// Safe mailto/tel — restrict to characters valid in those schemes.
+const safeMailto = (raw) => {
+  const s = String(raw ?? "").trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return "";
+  return `mailto:${encodeURIComponent(s).replace(/%40/g,"@").replace(/%2E/g,".")}`;
+};
+const safeTel = (raw) => {
+  const s = String(raw ?? "").replace(/[^\d+\-\s()]/g, "");
+  return s ? `tel:${s}` : "";
+};
+
 const uid   = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2);
 const today = ()=>new Date().toISOString().split("T")[0];
 const ym    = (d)=>{ const x=new Date(d||today()); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`; };
@@ -296,12 +382,19 @@ const myMtg = ()=>CU?.role==="rep"||CU?.role==="presales" ? D.meetings.filter(m=
 // ═══════════════════════════════════════════════════
 // TOAST / SYNC
 // ═══════════════════════════════════════════════════
-function toast(msg,type="success"){
-  const c={success:"var(--green)",error:"var(--red)",info:"var(--blue)",warn:"var(--orange)"};
-  const el=document.createElement("div"); el.className="ti";
-  el.innerHTML=`<div style="width:7px;height:7px;border-radius:50%;background:${c[type]||c.success};flex-shrink:0"></div>${msg}`;
+function toast(msg, type="success"){
+  const c = { success:"var(--green)", error:"var(--red)", info:"var(--blue)", warn:"var(--orange)" };
+  const el = document.createElement("div");
+  el.className = "ti";
+  // Build the dot via DOM nodes; render the message as text to prevent XSS.
+  const dot = document.createElement("div");
+  dot.style.cssText = `width:7px;height:7px;border-radius:50%;background:${c[type]||c.success};flex-shrink:0`;
+  const txt = document.createElement("span");
+  txt.textContent = String(msg ?? "");
+  el.appendChild(dot);
+  el.appendChild(txt);
   document.getElementById("toast").appendChild(el);
-  setTimeout(()=>el.remove(),3500);
+  setTimeout(()=>el.remove(), 3500);
 }
 const showSync=()=>document.getElementById("sync-bar").style.display="block";
 const hideSync=()=>document.getElementById("sync-bar").style.display="none";
@@ -314,73 +407,197 @@ function setSyncSt(ok){
 // ═══════════════════════════════════════════════════
 // MSAL
 // ═══════════════════════════════════════════════════
+function showLoginError(msg){
+  const el=document.getElementById("login-error");
+  if(!el) return;
+  el.style.display="block";
+  el.textContent = msg || "Sign in failed.";
+}
+
 async function signIn(){
-  try{ await msalApp.loginRedirect({scopes:SCOPES}); }
-  catch(e){ const el=document.getElementById("login-error"); el.style.display="block"; el.textContent=e.message||"Sign in failed."; }
+  if(!msalApp){
+    showLoginError(window.__MSAL_INIT_ERROR__ || "Authentication service unavailable.");
+    return;
+  }
+  try{
+    await msalApp.loginRedirect({
+      scopes: SCOPES,
+      prompt: "select_account"
+    });
+  }catch(e){
+    console.error("[signIn]", e);
+    showLoginError(e?.errorMessage || e?.message || "Sign in failed.");
+  }
 }
-async function signOut(){ await msalApp.logoutRedirect(); }
-async function getToken(){
-  const accs=msalApp.getAllAccounts(); if(!accs.length)return null;
-  try{ const r=await msalApp.acquireTokenSilent({scopes:SCOPES,account:accs[0]}); return r.accessToken; }
-  catch{ await msalApp.acquireTokenRedirect({scopes:SCOPES}); }
+
+async function signOut(){
+  if(!msalApp) return;
+  try{
+    const account = msalApp.getAllAccounts()[0];
+    await msalApp.logoutRedirect({ account, postLogoutRedirectUri: REDIRECT_URI });
+  }catch(e){ console.error("[signOut]", e); }
 }
+
+async function getToken({ forceInteractive = false } = {}){
+  if(!msalApp) return null;
+  const accs = msalApp.getAllAccounts();
+  if(!accs.length) return null;
+  const req = { scopes: SCOPES, account: accs[0] };
+  try{
+    if(forceInteractive) throw new Error("force-interactive");
+    const r = await msalApp.acquireTokenSilent(req);
+    return r.accessToken;
+  }catch(e){
+    // InteractionRequiredAuthError, consent_required, login_required, etc.
+    const code = e?.errorCode || "";
+    const interactive = forceInteractive ||
+      e?.name === "InteractionRequiredAuthError" ||
+      ["interaction_required","login_required","consent_required","invalid_grant"].includes(code);
+    if(interactive){
+      try{ await msalApp.acquireTokenRedirect(req); }
+      catch(e2){ console.error("[getToken redirect]", e2); }
+      return null;
+    }
+    console.error("[getToken silent]", e);
+    return null;
+  }
+}
+
 async function initUser(acc){
-  GT=await getToken();
-  const p=await gGraph("https://graph.microsoft.com/v1.0/me");
-  const email=(p.mail||p.userPrincipalName||"").toLowerCase();
-  CU={id:acc.homeAccountId,name:p.displayName||acc.name,email,role:ROLE_MAP[email]||"rep",initials:(p.displayName||"U").split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()};
-  await loadData();
-  if(!D.users.find(u=>u.email===email)){ D.users.push({id:uid(),name:CU.name,email,role:CU.role,active:true,target_monthly:50000,target_quarterly:150000,commission_rate:3,createdAt:today()}); await saveData(); }
-  document.getElementById("login-screen").style.display="none";
-  document.getElementById("app").style.display="flex";
-  buildSidebar(); renderView("command");
+  try{
+    GT = await getToken();
+    if(!GT){
+      showLoginError("Could not acquire access token. Please sign in again.");
+      return;
+    }
+    const p = await gGraph("https://graph.microsoft.com/v1.0/me");
+    const email = (p.mail || p.userPrincipalName || "").toLowerCase();
+    if(!email){
+      showLoginError("Microsoft account did not return an email address.");
+      return;
+    }
+    await loadData();
+
+    // Resolve role: D.role_map (admin-managed) > BOOTSTRAP_ADMINS (first-run seed) > "rep"
+    if(!D.role_map || typeof D.role_map !== "object") D.role_map = {};
+    if(Object.keys(D.role_map).length === 0){
+      // Seed once from the bootstrap list so a fresh OneDrive file isn't locked out of admin.
+      BOOTSTRAP_ADMINS.forEach(e => { D.role_map[e.toLowerCase()] = "admin"; });
+    }
+    const role = D.role_map[email] || "rep";
+
+    CU = {
+      id: acc.homeAccountId,
+      name: p.displayName || acc.name || email,
+      email,
+      role,
+      initials: (p.displayName || "U").split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()
+    };
+
+    if(!D.users.find(u => u.email === email)){
+      D.users.push({
+        id: uid(), name: CU.name, email, role: CU.role, active: true,
+        target_monthly: 50000, target_quarterly: 150000, commission_rate: 3,
+        createdAt: today()
+      });
+      await saveData();
+    }
+    document.getElementById("login-screen").style.display = "none";
+    document.getElementById("app").style.display = "flex";
+    buildSidebar();
+    renderView("command");
+  }catch(e){
+    console.error("[initUser]", e);
+    showLoginError(e?.message || "Failed to initialise session.");
+  }
 }
 
 // ═══════════════════════════════════════════════════
 // GRAPH / STORAGE
 // ═══════════════════════════════════════════════════
-async function gGraph(url,method="GET",body=null){
-  const t=GT||await getToken();
-  const o={method,headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"}};
-  if(body)o.body=JSON.stringify(body);
-  const r=await fetch(url,o); if(!r.ok&&r.status!==204)throw new Error(`Graph ${r.status}`);
-  if(r.status===204)return null; return r.json();
+async function gGraph(url, method="GET", body=null, _retry=false){
+  const t = GT || await getToken();
+  if(!t) throw new Error("Not signed in to Microsoft 365.");
+  const o = { method, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } };
+  if(body) o.body = JSON.stringify(body);
+  const r = await fetch(url, o);
+  // 401: token expired mid-session — refresh ONCE and retry.
+  if(r.status === 401 && !_retry){
+    GT = await getToken({ forceInteractive: false });
+    if(GT) return gGraph(url, method, body, true);
+  }
+  if(!r.ok && r.status !== 204){
+    let detail = "";
+    try{ const j = await r.json(); detail = j?.error?.message || ""; }catch{}
+    throw new Error(`Graph ${r.status}${detail ? ` — ${detail}` : ""}`);
+  }
+  if(r.status === 204) return null;
+  return r.json();
 }
+
+// OData literal escaping for $filter — single quote is the only special char in the string.
+const odataLit = (s) => `'${String(s).replace(/'/g,"''")}'`;
+
 async function loadData(){
   showSync();
   try{
-    const s=await gGraph(`https://graph.microsoft.com/v1.0/me/drive/root/children?$filter=name eq '${FILE_NAME}'`);
-    if(s.value&&s.value.length){
-      FID=s.value[0].id;
-      const t=GT||await getToken();
-      const r=await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${FID}/content`,{headers:{Authorization:`Bearer ${t}`}});
-      const txt=await r.text();
+    const s = await gGraph(`https://graph.microsoft.com/v1.0/me/drive/root/children?$filter=name eq ${odataLit(FILE_NAME)}`);
+    if(s.value && s.value.length){
+      FID = s.value[0].id;
+      const t = GT || await getToken();
+      const r = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(FID)}/content`,
+        { headers: { Authorization: `Bearer ${t}` } });
+      if(!r.ok) throw new Error(`Graph download ${r.status}`);
+      const txt = await r.text();
       try{
-        const parsed=JSON.parse(txt);
-        D={...D,...parsed};
-        if(!D.customers)D.customers=[];
-        if(!D.vendors)D.vendors=[];
-        if(!D.deals)D.deals=[];
-        if(!D.targets)D.targets=[];
-        if(!D.incentive_rules)D.incentive_rules=getDefaultRules();
-        if(!D.industries||!D.industries.length)D.industries=["Banking & Finance","Government","Energy & Utilities","Telecom","Healthcare","Oil & Gas","Defence","Construction","Logistics","Real Estate","Education","Aviation"];
-      }catch{D.incentive_rules=getDefaultRules();}
+        const parsed = JSON.parse(txt);
+        D = { ...D, ...parsed };
+        if(!Array.isArray(D.customers)) D.customers = [];
+        if(!Array.isArray(D.vendors))   D.vendors   = [];
+        if(!Array.isArray(D.deals))     D.deals     = [];
+        if(!Array.isArray(D.targets))   D.targets   = [];
+        if(!Array.isArray(D.users))     D.users     = [];
+        if(!Array.isArray(D.meetings))  D.meetings  = [];
+        if(!Array.isArray(D.incentive_rules) || !D.incentive_rules.length) D.incentive_rules = getDefaultRules();
+        if(!Array.isArray(D.industries) || !D.industries.length){
+          D.industries = ["Banking & Finance","Government","Energy & Utilities","Telecom","Healthcare","Oil & Gas","Defence","Construction","Logistics","Real Estate","Education","Aviation"];
+        }
+        if(!D.role_map || typeof D.role_map !== "object" || Array.isArray(D.role_map)) D.role_map = {};
+      }catch(parseErr){
+        console.error("[loadData parse]", parseErr);
+        D.incentive_rules = getDefaultRules();
+        toast("Stored data was unreadable — starting fresh","warn");
+      }
     }else{
-      D.incentive_rules=getDefaultRules();
+      D.incentive_rules = getDefaultRules();
       await saveData();
     }
     setSyncSt(true);
-  }catch(e){console.error(e);setSyncSt(false);toast("OneDrive offline — working locally","warn");}
+  }catch(e){
+    console.error("[loadData]", e);
+    setSyncSt(false);
+    toast("OneDrive offline — working locally","warn");
+  }
   hideSync();
 }
+
 async function saveData(){
   showSync();
   try{
-    const t=GT||await getToken();
-    const r=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${FILE_NAME}:/content`,{method:"PUT",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify(D,null,2)});
-    const data=await r.json(); if(data.id)FID=data.id;
+    const t = GT || await getToken();
+    if(!t) throw new Error("No access token.");
+    const r = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(FILE_NAME)}:/content`,
+      { method:"PUT", headers:{ Authorization:`Bearer ${t}`, "Content-Type":"application/json" },
+        body: JSON.stringify(D, null, 2) });
+    if(!r.ok) throw new Error(`Graph save ${r.status}`);
+    const data = await r.json();
+    if(data.id) FID = data.id;
     setSyncSt(true);
-  }catch(e){console.error(e);setSyncSt(false);toast("Save failed","error");}
+  }catch(e){
+    console.error("[saveData]", e);
+    setSyncSt(false);
+    toast("Save failed — check connection","error");
+  }
   hideSync();
 }
 function getDefaultRules(){
@@ -398,9 +615,9 @@ function getDefaultRules(){
 // ═══════════════════════════════════════════════════
 function buildSidebar(){
   document.getElementById("sb-user").innerHTML=`
-    <div class="av" style="width:34px;height:34px;background:linear-gradient(135deg,${ROLE_C[CU.role]||"#888"},#1a3a6e);font-size:12px;color:#fff">${CU.initials}</div>
+    <div class="av" style="width:34px;height:34px;background:linear-gradient(135deg,${ROLE_C[CU.role]||"#888"},#1a3a6e);font-size:12px;color:#fff">${esc(CU.initials)}</div>
     <div style="min-width:0">
-      <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CU.name.split(" ")[0]}</div>
+      <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((CU.name||"").split(" ")[0])}</div>
       <div style="margin-top:2px">${rbadge(CU.role)}</div>
     </div>`;
 
@@ -502,7 +719,7 @@ function rCommand(){
   document.getElementById("v-command").innerHTML=`
     <div class="ph" style="margin-bottom:18px">
       <div>
-        <div class="ph-title">${greet}, ${CU.name.split(" ")[0]}.</div>
+        <div class="ph-title">${greet}, ${esc((CU.name||"").split(" ")[0])}.</div>
         <div class="ph-sub">Revenue Command Center · Oman · ${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
       </div>
       <div style="display:flex;gap:8px">
@@ -571,7 +788,7 @@ function rCommand(){
             return `<div style="margin-bottom:13px">
               <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">
                 <span style="font-size:14px">${medals[i]||""}</span>
-                <span style="font-size:12px;color:var(--text);font-weight:600;flex:1">${(r.name||"").split(" ")[0]}</span>
+                <span style="font-size:12px;color:var(--text);font-weight:600;flex:1">${esc((r.name||"").split(" ")[0])}</span>
                 <span style="font-size:11px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(r.wonVal)}</span>
               </div>
               <div class="mbar"><div class="mbar-fill" style="width:${topReps[0].wonVal?pct(r.wonVal,topReps[0].wonVal):0}%;background:var(--gold)"></div></div>
@@ -589,12 +806,12 @@ function rCommand(){
           <span style="font-size:10px;color:var(--red)">${atRisk.length}</span>
         </div>
         ${atRisk.length===0?`<div style="font-size:13px;color:var(--dim)">No deals at risk</div>`:
-          atRisk.map(m=>`<div class="risk-item" onclick="viewMeeting('${m.id}');event.stopPropagation()" style="cursor:pointer">
+          atRisk.map(m=>`<div class="risk-item" onclick="viewMeeting('${escId(m.id)}');event.stopPropagation()" style="cursor:pointer">
             <div style="display:flex;justify-content:space-between;margin-bottom:2px">
-              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:12px;color:var(--text);font-weight:600">${esc(m.account)}</span>
               <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fOMR(m.value)}</span>
             </div>
-            <div style="font-size:11px;color:var(--dim)">${m.stage} · ${isOD(m)?"⚠ Overdue":m.priority+" priority"}</div>
+            <div style="font-size:11px;color:var(--dim)">${esc(m.stage)} · ${isOD(m)?"⚠ Overdue":esc(m.priority)+" priority"}</div>
           </div>`).join("")
         }
       </div>
@@ -606,10 +823,10 @@ function rCommand(){
             const cMtg=ms.filter(m=>m.account===c.name).length;
             return `<div class="opp-item">
               <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="font-size:12px;color:var(--text);font-weight:600">${c.name}</span>
+                <span style="font-size:12px;color:var(--text);font-weight:600">${esc(c.name)}</span>
                 <span style="font-size:11px;color:var(--orange)">${score}% penetrated</span>
               </div>
-              <div style="font-size:11px;color:var(--dim)">${cMtg} meetings · ${c.industry||"Unknown"}</div>
+              <div style="font-size:11px;color:var(--dim)">${cMtg} meetings · ${esc(c.industry||"Unknown")}</div>
               <div class="mbar" style="margin-top:5px"><div class="mbar-fill" style="width:${score}%;background:var(--orange)"></div></div>
             </div>`;
           }).join("")
@@ -620,7 +837,7 @@ function rCommand(){
         ${vPerf.length===0?`<div style="font-size:13px;color:var(--dim)">Log meetings with vendors to see data</div>`:
           vPerf.map((v,i)=>`<div style="margin-bottom:11px">
             <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-              <span style="font-size:12px;color:var(--muted)">${v.name}</span>
+              <span style="font-size:12px;color:var(--muted)">${esc(v.name)}</span>
               <span style="font-size:11px;color:${CHART_C[i]};font-weight:600;font-family:'DM Mono',monospace">${fOMR(v.revenue)}</span>
             </div>
             <div class="mbar"><div class="mbar-fill" style="width:${vPerf[0].revenue?pct(v.revenue,vPerf[0].revenue):0}%;background:${CHART_C[i]}"></div></div>
@@ -639,12 +856,12 @@ function rCommand(){
         </div>
         ${oc.length===0
           ?`<div style="font-size:13px;color:var(--dim);display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>All actions up to date</div>`
-          :oc.slice(0,5).map(m=>`<div class="risk-item" onclick="viewMeeting('${m.id}')" style="cursor:pointer">
+          :oc.slice(0,5).map(m=>`<div class="risk-item" onclick="viewMeeting('${escId(m.id)}')" style="cursor:pointer">
             <div style="display:flex;justify-content:space-between;margin-bottom:2px">
-              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:12px;color:var(--text);font-weight:600">${esc(m.account)}</span>
               <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fDate(m.nextDate)}</span>
             </div>
-            <div style="font-size:11px;color:var(--dim)">${(m.repName||"").split(" ")[0]} · ${m.nextAction||"Action pending"}</div>
+            <div style="font-size:11px;color:var(--dim)">${esc((m.repName||"").split(" ")[0])} · ${esc(m.nextAction||"Action pending")}</div>
           </div>`).join("")
         }
       </div>
@@ -692,15 +909,15 @@ function rPipeline(){
       }).join("")}
     </div>
     <div class="g3" style="margin-bottom:14px">
-      <div class="card">${donut(STAGES.slice(0,5).map(s=>({k:s,v:ms.filter(m=>m.stage===s).length})).filter(d=>d.v>0),"Stage Distribution")}</div>
-      <div class="card">${donut(gCust().slice(0,6).map(c=>({k:c.name,v:ms.filter(m=>m.account===c.name).length})).filter(d=>d.v>0),"Top Accounts")}</div>
-      <div class="card">${donut(gVend().slice(0,6).map(v=>({k:v.name||v,v:ms.filter(m=>m.vendor===(v.name||v)).length})).filter(d=>d.v>0),"Vendor Mix")}</div>
+      <div class="card">${donut(STAGES.slice(0,5).map(s=>({k:esc(s),v:ms.filter(m=>m.stage===s).length})).filter(d=>d.v>0),"Stage Distribution")}</div>
+      <div class="card">${donut(gCust().slice(0,6).map(c=>({k:esc(c.name),v:ms.filter(m=>m.account===c.name).length})).filter(d=>d.v>0),"Top Accounts")}</div>
+      <div class="card">${donut(gVend().slice(0,6).map(v=>({k:esc(v.name||v),v:ms.filter(m=>m.vendor===(v.name||v)).length})).filter(d=>d.v>0),"Vendor Mix")}</div>
     </div>
     <div class="card-flush">
       <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input class="fi" placeholder="Search…" value="${pFilters.search}" oninput="pFilters.search=this.value;rPipeline()" style="width:180px;padding:7px 11px;font-size:12px"/>
-        <select class="fi" onchange="pFilters.stage=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${s}" ${pFilters.stage===s?"selected":""}>${s}</option>`).join("")}</select>
-        <select class="fi" onchange="pFilters.priority=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${pFilters.priority===p?"selected":""}>${p}</option>`).join("")}</select>
+        <input class="fi" placeholder="Search…" value="${escAttr(pFilters.search)}" maxlength="120" oninput="pFilters.search=this.value;rPipeline()" style="width:180px;padding:7px 11px;font-size:12px"/>
+        <select class="fi" onchange="pFilters.stage=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${escAttr(s)}" ${pFilters.stage===s?"selected":""}>${esc(s)}</option>`).join("")}</select>
+        <select class="fi" onchange="pFilters.priority=this.value;rPipeline()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${pFilters.priority===p?"selected":""}>${esc(p)}</option>`).join("")}</select>
         <button class="btn btn-g btn-s" onclick="pFilters={search:'',stage:'',vendor:'',priority:'',rep:''};rPipeline()">Clear</button>
         <span style="margin-left:auto;font-size:11px;color:var(--dim);font-family:'DM Mono',monospace">${filterMeetings(ms,pFilters).length} results</span>
       </div>
@@ -710,27 +927,27 @@ function rPipeline(){
           ${filterMeetings(ms,pFilters).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,60).map(m=>`
           <tr>
             <td><div style="width:7px;height:7px;border-radius:50%;background:${m.priority==="High"?"var(--red)":m.priority==="Medium"?"var(--orange)":"var(--dim)"}"></div></td>
-            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${m.date}</td>
-            <td style="color:var(--text);font-weight:500">${m.account}</td>
-            <td style="color:var(--gold);font-size:11px">${m.vendor||"—"}</td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${esc(m.date)}</td>
+            <td style="color:var(--text);font-weight:500">${esc(m.account)}</td>
+            <td style="color:var(--gold);font-size:11px">${esc(m.vendor||"—")}</td>
             <td>${sbadge(m.stage)}</td>
             <td>
               <div style="font-size:12px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
               <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(m.value))}</div>
             </td>
-            <td style="color:${Number(m.margin||0)>=30?"var(--green)":Number(m.margin||0)>=15?"var(--orange)":"var(--red)"};font-weight:600;font-family:'DM Mono',monospace">${m.margin||"—"}%</td>
+            <td style="color:${Number(m.margin||0)>=30?"var(--green)":Number(m.margin||0)>=15?"var(--orange)":"var(--red)"};font-weight:600;font-family:'DM Mono',monospace">${Number(m.margin)||"—"}%</td>
             <td>
               <div style="font-size:10px;color:var(--dim)">
-                ${m.attr_sales?`S:${m.attr_sales}% `:""}${m.attr_presales?`P:${m.attr_presales}% `:""}${m.attr_vendor?`V:${m.attr_vendor}%`:""}
+                ${m.attr_sales?`S:${Number(m.attr_sales)}% `:""}${m.attr_presales?`P:${Number(m.attr_presales)}% `:""}${m.attr_vendor?`V:${Number(m.attr_vendor)}%`:""}
               </div>
             </td>
-            <td style="font-size:11px;color:var(--muted)">${(m.repName||"").split(" ")[0]}</td>
-            <td style="font-size:11px;color:var(--dim);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${m.nextAction||"—"}</td>
+            <td style="font-size:11px;color:var(--muted)">${esc((m.repName||"").split(" ")[0])}</td>
+            <td style="font-size:11px;color:var(--dim);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${esc(m.nextAction||"—")}</td>
             <td>
               <div style="display:flex;gap:3px">
-                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${m.id}')">${iEye()}</button>
-                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${m.id}')">${iEdit()}</button>`:""}
-                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${m.id}')">${iTrash()}</button>`:""}
+                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${escId(m.id)}')">${iEye()}</button>
+                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${escId(m.id)}')">${iEdit()}</button>`:""}
+                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${escId(m.id)}')">${iTrash()}</button>`:""}
               </div>
             </td>
           </tr>`).join("")}
@@ -753,11 +970,11 @@ function rMeetings(){
       <button class="btn btn-p" onclick="openMeetingForm()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Log Meeting</button>
     </div>
     <div class="fbar">
-      <input class="fi" placeholder="Search customer, notes…" value="${mFilters.search}" oninput="mFilters.search=this.value;rMeetings()" style="width:190px;padding:7px 11px;font-size:12px"/>
-      ${CU.role!=="rep"&&CU.role!=="presales"?`<select class="fi" onchange="mFilters.rep=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Reps</option>${gReps().map(u=>`<option value="${u.email}" ${mFilters.rep===u.email?"selected":""}>${u.name.split(" ")[0]}</option>`).join("")}</select>`:""}
-      <select class="fi" onchange="mFilters.stage=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${s}" ${mFilters.stage===s?"selected":""}>${s}</option>`).join("")}</select>
-      <select class="fi" onchange="mFilters.vendor=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Vendors</option>${gVend().map(v=>`<option value="${v.name||v}" ${mFilters.vendor===(v.name||v)?"selected":""}>${v.name||v}</option>`).join("")}</select>
-      <select class="fi" onchange="mFilters.priority=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${mFilters.priority===p?"selected":""}>${p}</option>`).join("")}</select>
+      <input class="fi" placeholder="Search customer, notes…" value="${escAttr(mFilters.search)}" maxlength="120" oninput="mFilters.search=this.value;rMeetings()" style="width:190px;padding:7px 11px;font-size:12px"/>
+      ${CU.role!=="rep"&&CU.role!=="presales"?`<select class="fi" onchange="mFilters.rep=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Reps</option>${gReps().map(u=>`<option value="${escAttr(u.email)}" ${mFilters.rep===u.email?"selected":""}>${esc((u.name||"").split(" ")[0])}</option>`).join("")}</select>`:""}
+      <select class="fi" onchange="mFilters.stage=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Stages</option>${STAGES.map(s=>`<option value="${escAttr(s)}" ${mFilters.stage===s?"selected":""}>${esc(s)}</option>`).join("")}</select>
+      <select class="fi" onchange="mFilters.vendor=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Vendors</option>${gVend().map(v=>{const vn=v.name||v;return `<option value="${escAttr(vn)}" ${mFilters.vendor===vn?"selected":""}>${esc(vn)}</option>`;}).join("")}</select>
+      <select class="fi" onchange="mFilters.priority=this.value;rMeetings()" style="font-size:12px;padding:7px 11px"><option value="">All Priorities</option>${PRIORITIES.map(p=>`<option ${mFilters.priority===p?"selected":""}>${esc(p)}</option>`).join("")}</select>
       <button class="btn btn-g btn-s" onclick="mFilters={search:'',stage:'',vendor:'',priority:'',rep:''};rMeetings()">Clear</button>
     </div>
     <div class="card-flush">
@@ -766,23 +983,23 @@ function rMeetings(){
         <tbody>
           ${fms.slice(0,80).map(m=>`<tr>
             <td><div style="width:7px;height:7px;border-radius:50%;background:${m.priority==="High"?"var(--red)":m.priority==="Medium"?"var(--orange)":"var(--dim)"}"></div></td>
-            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap">${m.date}</td>
-            <td style="color:var(--text);font-weight:600;white-space:nowrap">${(m.repName||"").split(" ")[0]}</td>
-            <td style="color:var(--text);font-weight:500;white-space:nowrap">${m.account}</td>
-            <td style="color:var(--gold);font-size:11px;white-space:nowrap">${m.vendor||"—"}</td>
-            <td style="color:var(--dim);font-size:11px;white-space:nowrap">${m.type||"—"}</td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap">${esc(m.date)}</td>
+            <td style="color:var(--text);font-weight:600;white-space:nowrap">${esc((m.repName||"").split(" ")[0])}</td>
+            <td style="color:var(--text);font-weight:500;white-space:nowrap">${esc(m.account)}</td>
+            <td style="color:var(--gold);font-size:11px;white-space:nowrap">${esc(m.vendor||"—")}</td>
+            <td style="color:var(--dim);font-size:11px;white-space:nowrap">${esc(m.type||"—")}</td>
             <td>${sbadge(m.stage)}</td>
             <td>
               <div style="font-size:12px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
               <div style="font-size:10px;color:var(--dim)">${fUSD(omrUsd(m.value))}</div>
             </td>
             <td>${stars(m.score)}</td>
-            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dim)">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${m.nextAction||""}</td>
+            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dim)">${isOD(m)?'<span style="color:var(--red)">⚠ </span>':""}${esc(m.nextAction||"")}</td>
             <td>
               <div style="display:flex;gap:3px">
-                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${m.id}')">${iEye()}</button>
-                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${m.id}')">${iEdit()}</button>`:""}
-                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${m.id}')">${iTrash()}</button>`:""}
+                <button class="btn btn-s" style="background:rgba(75,156,245,.1);border:1px solid rgba(75,156,245,.25);color:var(--blue);padding:3px 7px" onclick="viewMeeting('${escId(m.id)}')">${iEye()}</button>
+                ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${escId(m.id)}')">${iEdit()}</button>`:""}
+                ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delMeeting('${escId(m.id)}')">${iTrash()}</button>`:""}
               </div>
             </td>
           </tr>`).join("")}
@@ -863,7 +1080,7 @@ function rRevenue(){
     </div>
     <div class="g2">
       <div class="card">
-        ${barChart(gVend().map(v=>({k:v.name||v,v:closed.filter(m=>m.vendor===(v.name||v)).reduce((s,m)=>s+Number(m.value||0),0)})).filter(d=>d.v>0).sort((a,b)=>b.v-a.v).slice(0,8),"Revenue by Vendor","var(--teal)",v=>fOMR(v))}
+        ${barChart(gVend().map(v=>{const vn=v.name||v;return {k:esc(vn),v:closed.filter(m=>m.vendor===vn).reduce((s,m)=>s+Number(m.value||0),0)};}).filter(d=>d.v>0).sort((a,b)=>b.v-a.v).slice(0,8),"Revenue by Vendor","var(--teal)",v=>fOMR(v))}
       </div>
       <div class="card">
         <div class="stitle">GSI Partner Performance</div>
@@ -871,7 +1088,7 @@ function rRevenue(){
           ?`<div style="font-size:13px;color:var(--dim)">No GSI deals logged yet.<br><br><span style="font-size:11px">Set GSI Partner when logging meetings with GSI involvement.</span></div>`
           :Object.values(gsiPerf).sort((a,b)=>b.revenue-a.revenue).map((g,i)=>`<div style="margin-bottom:12px">
             <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-              <span style="font-size:12px;color:var(--muted)">${g.name}</span>
+              <span style="font-size:12px;color:var(--muted)">${esc(g.name)}</span>
               <span style="font-size:12px;color:${CHART_C[i]};font-weight:600;font-family:'DM Mono',monospace">${fOMR(g.revenue)}</span>
             </div>
             <div class="mbar"><div class="mbar-fill" style="width:${Object.values(gsiPerf)[0].revenue?pct(g.revenue,Object.values(gsiPerf)[0].revenue):0}%;background:${CHART_C[i]}"></div></div>
@@ -933,13 +1150,13 @@ function rMargin(){
             const mg=Number(m.margin||0); const mv=Number(m.value||0)*mg/100;
             const flag=mg<15?"🔴 Low":mg<25?"🟡 Mid":"🟢 Good";
             return `<tr>
-              <td style="color:var(--text);font-weight:500">${m.account}</td>
-              <td style="color:var(--gold);font-size:11px">${m.vendor||"—"}</td>
+              <td style="color:var(--text);font-weight:500">${esc(m.account)}</td>
+              <td style="color:var(--gold);font-size:11px">${esc(m.vendor||"—")}</td>
               <td>${sbadge(m.stage)}</td>
               <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(m.value)}</td>
               <td style="font-weight:700;color:${mg>=30?"var(--green)":mg>=15?"var(--orange)":"var(--red)"};font-family:'DM Mono',monospace">${mg}%</td>
               <td style="font-family:'DM Mono',monospace;color:var(--muted)">${fOMR(mv)}</td>
-              <td style="color:var(--dim);font-size:11px">${(m.repName||"").split(" ")[0]}</td>
+              <td style="color:var(--dim);font-size:11px">${esc((m.repName||"").split(" ")[0])}</td>
               <td style="font-size:12px">${flag}</td>
             </tr>`;
           }).join("")}
@@ -974,8 +1191,8 @@ function rAccounts(){
               const clv=cWon*2.5; // estimated CLV = 2.5x historical revenue
               const status=score>=70?"🟢 Strategic":score>=40?"🟡 Growing":"🔴 Early Stage";
               return `<tr>
-                <td style="color:var(--text);font-weight:600">${c.name}</td>
-                <td style="color:var(--dim);font-size:11px">${c.industry||"—"}</td>
+                <td style="color:var(--text);font-weight:600">${esc(c.name)}</td>
+                <td style="color:var(--dim);font-size:11px">${esc(c.industry||"—")}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--gold)">${cMtg.length}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--blue)">${fOMR(cPipe)}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(cWon)}</td>
@@ -988,8 +1205,8 @@ function rAccounts(){
                 <td style="font-family:'DM Mono',monospace;color:var(--purple)">${fOMR(clv)}</td>
                 <td style="font-size:11px">${status}</td>
                 <td>
-                  <div style="font-size:11px;color:var(--text)">${c.focalName||"—"}</div>
-                  ${c.focalPhone?`<div style="font-size:10px;color:var(--blue)">${c.focalPhone}</div>`:""}
+                  <div style="font-size:11px;color:var(--text)">${esc(c.focalName||"—")}</div>
+                  ${c.focalPhone?`<div style="font-size:10px;color:var(--blue)">${esc(c.focalPhone)}</div>`:""}
                 </td>
               </tr>`;
             }).join("")}
@@ -1051,8 +1268,8 @@ function rIncentive(){
       <div class="stitle">Active Commission Rules</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${rules.map(r=>`<div style="background:var(--gold-dim);border:1px solid var(--gold-border);border-radius:9px;padding:10px 14px;min-width:160px">
-          <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:3px">${r.name}</div>
-          <div style="font-size:11px;color:var(--muted)">${r.description}</div>
+          <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:3px">${esc(r.name)}</div>
+          <div style="font-size:11px;color:var(--muted)">${esc(r.description)}</div>
         </div>`).join("")}
       </div>
     </div>
@@ -1071,12 +1288,12 @@ function rIncentive(){
               const u=D.users.find(u=>u.email===r.email);
               return `<tr>
                 <td><div style="display:flex;align-items:center;gap:8px">
-                  <div class="av" style="width:28px;height:28px;background:linear-gradient(135deg,var(--gold),#9a7520);font-size:10px;color:#07090f">${(r.name||"?").split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
-                  <span style="font-weight:600;color:var(--text)">${r.name}</span>
+                  <div class="av" style="width:28px;height:28px;background:linear-gradient(135deg,var(--gold),#9a7520);font-size:10px;color:#07090f">${esc((r.name||"?").split(" ").map(n=>n[0]).join("").slice(0,2))}</div>
+                  <span style="font-weight:600;color:var(--text)">${esc(r.name)}</span>
                 </div></td>
                 <td style="font-family:'DM Mono',monospace;color:var(--gold)">${r.deals.length}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--green)">${fOMR(r.totalRev)}</td>
-                <td style="font-family:'DM Mono',monospace;color:var(--dim)">${u?.commission_rate||3}%</td>
+                <td style="font-family:'DM Mono',monospace;color:var(--dim)">${Number(u?.commission_rate||3)}%</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--gold);font-weight:700;font-size:14px">${fOMR(r.totalComm)}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--dim);font-size:11px">${fUSD(omrUsd(r.totalComm))}</td>
               </tr>`;
@@ -1096,10 +1313,10 @@ function openRulesEditor(){
     </div>
     ${rules.map((r,i)=>`<div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:600;color:var(--text)">${r.name}</span>
-        <span style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace">${r.value}%</span>
+        <span style="font-size:13px;font-weight:600;color:var(--text)">${esc(r.name)}</span>
+        <span style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace">${Number(r.value)||0}%</span>
       </div>
-      <div style="font-size:12px;color:var(--dim)">${r.description}</div>
+      <div style="font-size:12px;color:var(--dim)">${esc(r.description)}</div>
     </div>`).join("")}
     <div style="margin-top:14px;font-size:12px;color:var(--dim)">Full rule editing coming in next update. Contact admin to modify rules.</div>
   `,"narrow");
@@ -1138,8 +1355,8 @@ function rCashflow(){
         ${active.filter(m=>["Proposal","Negotiation"].includes(m.stage)).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,8).map(m=>`
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04)">
             <div>
-              <div style="font-size:13px;color:var(--text);font-weight:500">${m.account}</div>
-              <div style="font-size:11px;color:var(--dim)">${m.stage} · ${m.vendor||"—"} · Due ${fDate(m.nextDate)}</div>
+              <div style="font-size:13px;color:var(--text);font-weight:500">${esc(m.account)}</div>
+              <div style="font-size:11px;color:var(--dim)">${esc(m.stage)} · ${esc(m.vendor||"—")} · Due ${fDate(m.nextDate)}</div>
             </div>
             <div style="text-align:right">
               <div style="font-size:13px;color:var(--green);font-weight:600;font-family:'DM Mono',monospace">${fOMR(m.value)}</div>
@@ -1152,10 +1369,10 @@ function rCashflow(){
         ${ms.filter(isOD).slice(0,8).map(m=>`
           <div class="risk-item">
             <div style="display:flex;justify-content:space-between;margin-bottom:2px">
-              <span style="font-size:12px;color:var(--text);font-weight:600">${m.account}</span>
+              <span style="font-size:12px;color:var(--text);font-weight:600">${esc(m.account)}</span>
               <span style="font-size:11px;color:var(--red);font-family:'DM Mono',monospace">${fOMR(m.value)}</span>
             </div>
-            <div style="font-size:11px;color:var(--dim)">${m.nextAction||"Action pending"} · Due ${fDate(m.nextDate)}</div>
+            <div style="font-size:11px;color:var(--dim)">${esc(m.nextAction||"Action pending")} · Due ${fDate(m.nextDate)}</div>
           </div>`).join("")||`<div style="font-size:13px;color:var(--dim)">No overdue accounts</div>`}
       </div>
     </div>
@@ -1241,7 +1458,7 @@ function rSim(){
         <div style="margin-bottom:12px">
           <label style="font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px">Focus vendor</label>
           <select class="fi" id="sim-vendor" onchange="runSim()" style="font-size:12px;padding:8px 11px">
-            ${gVend().slice(0,8).map(v=>`<option>${v.name||v}</option>`).join("")}
+            ${gVend().slice(0,8).map(v=>{const vn=v.name||v;return `<option value="${escAttr(vn)}">${esc(vn)}</option>`;}).join("")}
           </select>
         </div>
         <div style="margin-bottom:12px">
@@ -1366,18 +1583,20 @@ function rCustomers(){
             customers.map(c=>{
               const cMtg=D.meetings.filter(m=>m.account===c.name);
               const cRev=cMtg.filter(m=>m.stage==="Closed Won").reduce((s,m)=>s+Number(m.value||0),0);
+              const tel = safeTel(c.focalPhone);
+              const mail = safeMailto(c.focalEmail);
               return `<tr>
-                <td style="color:var(--text);font-weight:600">${c.name}</td>
-                <td style="color:var(--dim);font-size:11px">${c.industry||"—"}</td>
-                <td><div style="font-size:12px;color:var(--text)">${c.focalName||"—"}</div></td>
-                <td style="color:var(--dim);font-size:11px">${c.focalDesignation||"—"}</td>
-                <td>${c.focalPhone?`<a href="tel:${c.focalPhone}" style="color:var(--blue);font-size:11px;text-decoration:none">${c.focalPhone}</a>`:"—"}</td>
-                <td>${c.focalEmail?`<a href="mailto:${c.focalEmail}" style="color:var(--teal);font-size:11px;text-decoration:none">${c.focalEmail}</a>`:"—"}</td>
+                <td style="color:var(--text);font-weight:600">${esc(c.name)}</td>
+                <td style="color:var(--dim);font-size:11px">${esc(c.industry||"—")}</td>
+                <td><div style="font-size:12px;color:var(--text)">${esc(c.focalName||"—")}</div></td>
+                <td style="color:var(--dim);font-size:11px">${esc(c.focalDesignation||"—")}</td>
+                <td>${tel?`<a href="${escAttr(tel)}" rel="noopener noreferrer" style="color:var(--blue);font-size:11px;text-decoration:none">${esc(c.focalPhone)}</a>`:"—"}</td>
+                <td>${mail?`<a href="${escAttr(mail)}" rel="noopener noreferrer" style="color:var(--teal);font-size:11px;text-decoration:none">${esc(c.focalEmail)}</a>`:"—"}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--gold)">${cMtg.length}</td>
                 <td style="font-family:'DM Mono',monospace;color:var(--green);font-size:11px">${fOMR(cRev)}</td>
                 <td><div style="display:flex;gap:4px">
-                  <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openCustForm('${c.id}')">${iEdit()}</button>
-                  ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delCust('${c.id}')">${iTrash()}</button>`:""}
+                  <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openCustForm('${escId(c.id)}')">${iEdit()}</button>
+                  ${CU.role==="admin"?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delCust('${escId(c.id)}')">${iTrash()}</button>`:""}
                 </div></td>
               </tr>`;
             }).join("")
@@ -1393,19 +1612,19 @@ function openCustForm(id){
   const f=(k,d="")=>c?(c[k]??d):d;
   showModal(`${c?"Edit":"New"} Customer`,`
     <div class="fg">
-      <div class="f full"><label>Customer Name</label><input class="fi" id="cf-name" value="${f("name")}" placeholder="e.g. Bank Muscat"/></div>
-      <div class="f"><label>Industry</label><select class="fi" id="cf-ind"><option value="">Select…</option>${gInd().map(i=>`<option ${f("industry")===i?"selected":""}>${i}</option>`).join("")}</select></div>
+      <div class="f full"><label>Customer Name</label><input class="fi" id="cf-name" value="${escAttr(f("name"))}" maxlength="160" placeholder="e.g. Bank Muscat"/></div>
+      <div class="f"><label>Industry</label><select class="fi" id="cf-ind"><option value="">Select…</option>${gInd().map(i=>`<option value="${escAttr(i)}" ${f("industry")===i?"selected":""}>${esc(i)}</option>`).join("")}</select></div>
       <div class="f"><label>Country</label><input class="fi" value="Oman" readonly style="opacity:.6"/></div>
       <div class="f full" style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">
         <div style="font-size:10px;color:var(--gold);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Focal Point</div>
       </div>
-      <div class="f"><label>Full Name</label><input class="fi" id="cf-fn" value="${f("focalName")}" placeholder="Full name"/></div>
-      <div class="f"><label>Designation</label><input class="fi" id="cf-fd" value="${f("focalDesignation")}" placeholder="e.g. IT Director"/></div>
-      <div class="f"><label>Mobile</label><input class="fi" id="cf-fp" value="${f("focalPhone")}" placeholder="+968 9X XXX XXXX" type="tel"/></div>
-      <div class="f"><label>Email</label><input class="fi" id="cf-fe" value="${f("focalEmail")}" placeholder="focal@company.om" type="email"/></div>
-      <div class="f full"><label>Notes</label><textarea class="fi" id="cf-notes" rows="2">${f("notes")}</textarea></div>
+      <div class="f"><label>Full Name</label><input class="fi" id="cf-fn" value="${escAttr(f("focalName"))}" maxlength="120" placeholder="Full name"/></div>
+      <div class="f"><label>Designation</label><input class="fi" id="cf-fd" value="${escAttr(f("focalDesignation"))}" maxlength="120" placeholder="e.g. IT Director"/></div>
+      <div class="f"><label>Mobile</label><input class="fi" id="cf-fp" value="${escAttr(f("focalPhone"))}" maxlength="40" placeholder="+968 9X XXX XXXX" type="tel"/></div>
+      <div class="f"><label>Email</label><input class="fi" id="cf-fe" value="${escAttr(f("focalEmail"))}" maxlength="254" placeholder="focal@company.om" type="email"/></div>
+      <div class="f full"><label>Notes</label><textarea class="fi" id="cf-notes" rows="2" maxlength="2000">${esc(f("notes"))}</textarea></div>
       <div class="f full" style="display:flex;gap:9px;margin-top:3px">
-        <button class="btn btn-p" style="flex:1" onclick="saveCust('${id||""}')">${c?"Save Changes":"Add Customer"}</button>
+        <button class="btn btn-p" style="flex:1" onclick="saveCust('${escAttr(id||"")}')">${c?"Save Changes":"Add Customer"}</button>
         <button class="btn btn-g" onclick="closeModal()">Cancel</button>
       </div>
     </div>
@@ -1413,11 +1632,26 @@ function openCustForm(id){
 }
 
 async function saveCust(id){
-  const g=eid=>document.getElementById(eid)?.value||"";
-  const data={id:id||uid(),name:g("cf-name"),industry:g("cf-ind"),country:"Oman",focalName:g("cf-fn"),focalDesignation:g("cf-fd"),focalPhone:g("cf-fp"),focalEmail:g("cf-fe"),notes:g("cf-notes"),createdAt:id?(gCust().find(c=>c.id===id)||{}).createdAt||today():today()};
-  if(!data.name){toast("Customer name required","error");return;}
-  if(id){D.customers=D.customers.map(c=>c.id===id?data:c);}else{D.customers.push(data);}
-  closeModal(); await saveData(); toast(id?"Customer updated":"Customer added"); rCustomers();
+  const g = eid => (document.getElementById(eid)?.value || "").trim();
+  const name = g("cf-name").slice(0,160);
+  if(!name){ toast("Customer name required","error"); return; }
+  const email = g("cf-fe").slice(0,254);
+  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Focal email looks invalid","error"); return; }
+  const data = {
+    id: id || uid(),
+    name,
+    industry: g("cf-ind").slice(0,80),
+    country: "Oman",
+    focalName: g("cf-fn").slice(0,120),
+    focalDesignation: g("cf-fd").slice(0,120),
+    focalPhone: g("cf-fp").slice(0,40),
+    focalEmail: email,
+    notes: g("cf-notes").slice(0,2000),
+    createdAt: id ? ((gCust().find(c=>c.id===id) || {}).createdAt || today()) : today()
+  };
+  if(id){ D.customers = D.customers.map(c => c.id === id ? data : c); }
+  else  { D.customers.push(data); }
+  closeModal(); await saveData(); toast(id ? "Customer updated" : "Customer added"); rCustomers();
 }
 
 async function delCust(id){
@@ -1441,20 +1675,22 @@ function rVendors(){
         <thead><tr><th>Vendor</th><th>Category</th><th>Contact</th><th>Email</th><th>Website</th><th>Meetings</th><th>Revenue</th>${CU.role!=="rep"?"<th>Actions</th>":""}</tr></thead>
         <tbody>
           ${vendors.map(v=>{
-            const vn=v.name||v;
-            const vm=D.meetings.filter(m=>m.vendor===vn);
-            const vr=vm.filter(m=>m.stage==="Closed Won").reduce((s,m)=>s+Number(m.value||0),0);
+            const vn = v.name || v;
+            const vm = D.meetings.filter(m => m.vendor === vn);
+            const vr = vm.filter(m => m.stage === "Closed Won").reduce((s,m)=>s+Number(m.value||0), 0);
+            const mail = safeMailto(v.contactEmail);
+            const site = safeUrl(v.website);
             return `<tr>
-              <td style="color:var(--text);font-weight:600">${vn}</td>
-              <td style="color:var(--dim);font-size:11px">${v.category||"Cybersecurity"}</td>
-              <td style="color:var(--muted);font-size:11px">${v.contact||"—"}</td>
-              <td>${v.contactEmail?`<a href="mailto:${v.contactEmail}" style="color:var(--teal);font-size:11px;text-decoration:none">${v.contactEmail}</a>`:"—"}</td>
-              <td>${v.website?`<a href="https://${v.website}" target="_blank" style="color:var(--blue);font-size:11px;text-decoration:none">${v.website}</a>`:"—"}</td>
+              <td style="color:var(--text);font-weight:600">${esc(vn)}</td>
+              <td style="color:var(--dim);font-size:11px">${esc(v.category||"Cybersecurity")}</td>
+              <td style="color:var(--muted);font-size:11px">${esc(v.contact||"—")}</td>
+              <td>${mail?`<a href="${escAttr(mail)}" rel="noopener noreferrer" style="color:var(--teal);font-size:11px;text-decoration:none">${esc(v.contactEmail)}</a>`:"—"}</td>
+              <td>${site?`<a href="${escAttr(site)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue);font-size:11px;text-decoration:none">${esc(v.website)}</a>`:"—"}</td>
               <td style="font-family:'DM Mono',monospace;color:var(--gold)">${vm.length}</td>
               <td style="font-family:'DM Mono',monospace;color:var(--green);font-size:11px">${fOMR(vr)}</td>
               ${CU.role!=="rep"?`<td><div style="display:flex;gap:4px">
-                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openVendForm('${v.id||vn}')">${iEdit()}</button>
-                ${CU.role==="admin"&&v.id?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delVend('${v.id}')">${iTrash()}</button>`:""}
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openVendForm('${escId(v.id||vn)}')">${iEdit()}</button>
+                ${CU.role==="admin"&&v.id?`<button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delVend('${escId(v.id)}')">${iTrash()}</button>`:""}
               </div></td>`:""}
             </tr>`;
           }).join("")}
@@ -1465,19 +1701,19 @@ function rVendors(){
 }
 
 function openVendForm(id){
-  const existing=D.vendors.find(v=>v.id===id);
-  const v=existing||null;
-  const f=(k,d="")=>v?(v[k]??d):d;
+  const existing = D.vendors.find(v => v.id === id);
+  const v = existing || null;
+  const f = (k,d="") => v ? (v[k] ?? d) : d;
   showModal(`${v?"Edit":"New"} Vendor`,`
     <div class="fg">
-      <div class="f full"><label>Vendor Name</label><input class="fi" id="vf-name" value="${f("name",id&&!existing?id:"")}" placeholder="e.g. Palo Alto Networks"/></div>
-      <div class="f"><label>Category</label><input class="fi" id="vf-cat" value="${f("category","Cybersecurity")}" placeholder="e.g. Cybersecurity"/></div>
-      <div class="f"><label>Website</label><input class="fi" id="vf-web" value="${f("website")}" placeholder="e.g. paloaltonetworks.com"/></div>
-      <div class="f"><label>Contact Person</label><input class="fi" id="vf-con" value="${f("contact")}" placeholder="Vendor rep name"/></div>
-      <div class="f"><label>Contact Email</label><input class="fi" id="vf-email" value="${f("contactEmail")}" placeholder="rep@vendor.com" type="email"/></div>
-      <div class="f full"><label>Notes / Partnership Level</label><textarea class="fi" id="vf-notes" rows="2">${f("notes")}</textarea></div>
+      <div class="f full"><label>Vendor Name</label><input class="fi" id="vf-name" value="${escAttr(f("name", id && !existing ? id : ""))}" maxlength="120" placeholder="e.g. Palo Alto Networks"/></div>
+      <div class="f"><label>Category</label><input class="fi" id="vf-cat" value="${escAttr(f("category","Cybersecurity"))}" maxlength="80" placeholder="e.g. Cybersecurity"/></div>
+      <div class="f"><label>Website</label><input class="fi" id="vf-web" value="${escAttr(f("website"))}" maxlength="200" placeholder="e.g. paloaltonetworks.com"/></div>
+      <div class="f"><label>Contact Person</label><input class="fi" id="vf-con" value="${escAttr(f("contact"))}" maxlength="120" placeholder="Vendor rep name"/></div>
+      <div class="f"><label>Contact Email</label><input class="fi" id="vf-email" value="${escAttr(f("contactEmail"))}" maxlength="254" placeholder="rep@vendor.com" type="email"/></div>
+      <div class="f full"><label>Notes / Partnership Level</label><textarea class="fi" id="vf-notes" rows="2" maxlength="2000">${esc(f("notes"))}</textarea></div>
       <div class="f full" style="display:flex;gap:9px;margin-top:3px">
-        <button class="btn btn-p" style="flex:1" onclick="saveVend('${existing?id:""}')">Save Vendor</button>
+        <button class="btn btn-p" style="flex:1" onclick="saveVend('${escAttr(existing ? id : "")}')">Save Vendor</button>
         <button class="btn btn-g" onclick="closeModal()">Cancel</button>
       </div>
     </div>
@@ -1485,10 +1721,22 @@ function openVendForm(id){
 }
 
 async function saveVend(id){
-  const g=eid=>document.getElementById(eid)?.value||"";
-  const data={id:id||uid(),name:g("vf-name"),category:g("vf-cat"),website:g("vf-web"),contact:g("vf-con"),contactEmail:g("vf-email"),notes:g("vf-notes")};
-  if(!data.name){toast("Vendor name required","error");return;}
-  if(id){D.vendors=D.vendors.map(v=>v.id===id?data:v);}else{if(!D.vendors.find(v=>v.name===data.name))D.vendors.push(data);}
+  const g = eid => (document.getElementById(eid)?.value || "").trim();
+  const name = g("vf-name").slice(0,120);
+  if(!name){ toast("Vendor name required","error"); return; }
+  const email = g("vf-email").slice(0,254);
+  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Contact email looks invalid","error"); return; }
+  const data = {
+    id: id || uid(),
+    name,
+    category: g("vf-cat").slice(0,80),
+    website: g("vf-web").slice(0,200),
+    contact: g("vf-con").slice(0,120),
+    contactEmail: email,
+    notes: g("vf-notes").slice(0,2000)
+  };
+  if(id){ D.vendors = D.vendors.map(v => v.id === id ? data : v); }
+  else { if(!D.vendors.find(v => v.name === data.name)) D.vendors.push(data); }
   closeModal(); await saveData(); toast("Vendor saved"); rVendors();
 }
 
@@ -1523,19 +1771,19 @@ function rUsers(){
         <tbody>
           ${D.users.map(u=>`<tr>
             <td><div style="display:flex;align-items:center;gap:9px">
-              <div class="av" style="width:30px;height:30px;background:linear-gradient(135deg,${ROLE_C[u.role]||"#888"},#1a3a6e);font-size:11px;color:#fff">${(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
-              <span style="font-weight:600;color:var(--text)">${u.name}</span>
+              <div class="av" style="width:30px;height:30px;background:linear-gradient(135deg,${ROLE_C[u.role]||"#888"},#1a3a6e);font-size:11px;color:#fff">${esc((u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2))}</div>
+              <span style="font-weight:600;color:var(--text)">${esc(u.name)}</span>
             </div></td>
-            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${u.email}</td>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:10px">${esc(u.email)}</td>
             <td>${rbadge(u.role)}</td>
-            <td style="color:var(--dim);font-size:11px">${u.region||"Oman"}</td>
+            <td style="color:var(--dim);font-size:11px">${esc(u.region||"Oman")}</td>
             <td style="font-family:'DM Mono',monospace;color:var(--gold);font-size:11px">${fOMR(u.target_monthly||50000)}</td>
-            <td style="font-family:'DM Mono',monospace;color:var(--muted);font-size:11px">${u.commission_rate||3}%</td>
+            <td style="font-family:'DM Mono',monospace;color:var(--muted);font-size:11px">${Number(u.commission_rate||3)}%</td>
             <td style="font-family:'DM Mono',monospace;font-weight:600">${D.meetings.filter(m=>m.repEmail===u.email).length}</td>
             <td><span style="font-size:10px;padding:3px 8px;border-radius:20px;background:${u.active!==false?"rgba(61,214,140,.1)":"rgba(255,255,255,.05)"};color:${u.active!==false?"var(--green)":"var(--dim)"};border:1px solid ${u.active!==false?"rgba(61,214,140,.25)":"rgba(255,255,255,.1)"}">${u.active!==false?"Active":"Inactive"}</span></td>
             <td><div style="display:flex;gap:4px">
-              <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openUserForm('${u.id}')">${iEdit()}</button>
-              <button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delUser('${u.id}')">${iTrash()}</button>
+              <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:4px 9px" onclick="openUserForm('${escId(u.id)}')">${iEdit()}</button>
+              <button class="btn btn-s btn-d" style="padding:4px 9px" onclick="delUser('${escId(u.id)}')">${iTrash()}</button>
             </div></td>
           </tr>`).join("")}
         </tbody>
@@ -1549,15 +1797,15 @@ function openUserForm(id){
   const f=(k,d="")=>u?(u[k]??d):d;
   showModal(`${u?"Edit":"New"} User`,`
     <div class="fg">
-      <div class="f full"><label>Full Name</label><input class="fi" id="uf-name" value="${f("name")}" placeholder="First Last"/></div>
-      <div class="f"><label>Email (M365)</label><input class="fi" id="uf-email" value="${f("email")}" placeholder="user@majants.onmicrosoft.com" type="email"/></div>
+      <div class="f full"><label>Full Name</label><input class="fi" id="uf-name" value="${escAttr(f("name"))}" placeholder="First Last" maxlength="120"/></div>
+      <div class="f"><label>Email (M365)</label><input class="fi" id="uf-email" value="${escAttr(f("email"))}" placeholder="user@majants.onmicrosoft.com" type="email" maxlength="254"/></div>
       <div class="f"><label>Role</label><select class="fi" id="uf-role">${["admin","manager","rep","presales"].map(r=>`<option value="${r}" ${f("role","rep")===r?"selected":""}>${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join("")}</select></div>
-      <div class="f"><label>Region</label><input class="fi" id="uf-region" value="${f("region","Oman")}" placeholder="Oman"/></div>
-      <div class="f"><label>Monthly Target (OMR)</label><input class="fi" id="uf-target" value="${f("target_monthly",50000)}" type="number" placeholder="50000"/></div>
-      <div class="f"><label>Commission Rate %</label><input class="fi" id="uf-comm" value="${f("commission_rate",3)}" type="number" step="0.5" placeholder="3"/></div>
+      <div class="f"><label>Region</label><input class="fi" id="uf-region" value="${escAttr(f("region","Oman"))}" placeholder="Oman" maxlength="60"/></div>
+      <div class="f"><label>Monthly Target (OMR)</label><input class="fi" id="uf-target" value="${escAttr(f("target_monthly",50000))}" type="number" min="0" placeholder="50000"/></div>
+      <div class="f"><label>Commission Rate %</label><input class="fi" id="uf-comm" value="${escAttr(f("commission_rate",3))}" type="number" step="0.5" min="0" max="100" placeholder="3"/></div>
       <div class="f"><label>Status</label><select class="fi" id="uf-active"><option value="true" ${f("active",true)===true||f("active",true)==="true"?"selected":""}>Active</option><option value="false" ${f("active",true)===false||f("active",true)==="false"?"selected":""}>Inactive</option></select></div>
       <div class="f full" style="display:flex;gap:9px;margin-top:3px">
-        <button class="btn btn-p" style="flex:1" onclick="saveUser('${id||""}')">${u?"Save Changes":"Create User"}</button>
+        <button class="btn btn-p" style="flex:1" onclick="saveUser('${escAttr(id||"")}')">${u?"Save Changes":"Create User"}</button>
         <button class="btn btn-g" onclick="closeModal()">Cancel</button>
       </div>
     </div>
@@ -1565,10 +1813,34 @@ function openUserForm(id){
 }
 
 async function saveUser(id){
-  const g=eid=>document.getElementById(eid)?.value||"";
-  const data={id:id||uid(),name:g("uf-name"),email:g("uf-email").toLowerCase(),role:g("uf-role"),region:g("uf-region"),target_monthly:Number(g("uf-target")||50000),commission_rate:Number(g("uf-comm")||3),active:g("uf-active")==="true",createdAt:id?(D.users.find(u=>u.id===id)||{}).createdAt||today():today()};
-  if(id){D.users=D.users.map(u=>u.id===id?data:u);}else{D.users.push(data);}
-  closeModal(); await saveData(); toast(id?"User updated":"User created"); rUsers();
+  const g = eid => (document.getElementById(eid)?.value || "").trim();
+  const name = g("uf-name").slice(0,120);
+  const email = g("uf-email").toLowerCase().slice(0,254);
+  const role = g("uf-role");
+  const region = g("uf-region").slice(0,60);
+
+  if(!name){ toast("Name is required","error"); return; }
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Valid email is required","error"); return; }
+  if(!["admin","manager","rep","presales"].includes(role)){ toast("Invalid role","error"); return; }
+
+  const target = Math.max(0, Number(g("uf-target")) || 50000);
+  const comm   = Math.min(100, Math.max(0, Number(g("uf-comm")) || 3));
+
+  // Reject duplicate email on create / on edit-to-existing.
+  const dup = D.users.find(u => u.email === email && u.id !== id);
+  if(dup){ toast("A user with this email already exists","error"); return; }
+
+  const data = {
+    id: id || uid(),
+    name, email, role, region,
+    target_monthly: target,
+    commission_rate: comm,
+    active: g("uf-active") === "true",
+    createdAt: id ? ((D.users.find(u=>u.id===id) || {}).createdAt || today()) : today()
+  };
+  if(id){ D.users = D.users.map(u => u.id === id ? data : u); }
+  else  { D.users.push(data); }
+  closeModal(); await saveData(); toast(id ? "User updated" : "User created"); rUsers();
 }
 
 async function delUser(id){
@@ -1585,8 +1857,8 @@ function openIndustryMgr(){
       <button class="btn btn-p btn-s" onclick="addIndustry()">Add</button>
     </div>
     <div>${inds.map(i=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(255,255,255,.03);border-radius:7px;margin-bottom:5px">
-      <span style="font-size:13px;color:var(--text)">${i}</span>
-      ${D.industries.includes(i)?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="removeInd('${i}')">${iTrash()}</button>`:`<span style="font-size:10px;color:var(--dim)">Default</span>`}
+      <span style="font-size:13px;color:var(--text)">${esc(i)}</span>
+      ${D.industries.includes(i)?`<button class="btn btn-s btn-d" style="padding:3px 7px" onclick="removeInd('${escAttr(i)}')">${iTrash()}</button>`:`<span style="font-size:10px;color:var(--dim)">Default</span>`}
     </div>`).join("")}</div>
   `,"narrow");
 }
@@ -1609,52 +1881,53 @@ async function removeInd(name){
 function openMeetingForm(id){
   const m=id?D.meetings.find(x=>x.id===id):null;
   const f=(k,d="")=>m?(m[k]??d):d;
-  const repOpts=CU.role!=="rep"&&CU.role!=="presales"
-    ?D.users.map(u=>`<option value="${u.email}|${u.name}" ${m&&m.repEmail===u.email?"selected":""}>${u.name}</option>`).join(""):"";
+  const repOpts = CU.role!=="rep" && CU.role!=="presales"
+    ? D.users.map(u=>`<option value="${escAttr(u.email)}|${escAttr(u.name)}" ${m && m.repEmail===u.email ? "selected":""}>${esc(u.name)}</option>`).join("")
+    : "";
 
   showModal(`${m?"Edit":"Log New"} Meeting`,`
     <div class="fg">
       ${CU.role!=="rep"&&CU.role!=="presales"?`<div class="f"><label>Sales Rep</label><select class="fi" id="mf-rep"><option value="">Select rep…</option>${repOpts}</select></div>`:""}
       <div class="f"><label>Customer</label>
-        <select class="fi" id="mf-acct"><option value="">Select customer…</option>${gCust().map(c=>`<option value="${c.name}" ${f("account")===c.name?"selected":""}>${c.name}</option>`).join("")}</select>
+        <select class="fi" id="mf-acct"><option value="">Select customer…</option>${gCust().map(c=>`<option value="${escAttr(c.name)}" ${f("account")===c.name?"selected":""}>${esc(c.name)}</option>`).join("")}</select>
         <div style="font-size:11px;color:var(--gold);margin-top:3px;cursor:pointer" onclick="closeModal();renderView('customers')">+ Add new customer →</div>
       </div>
       <div class="f"><label>Vendor Covered</label>
-        <select class="fi" id="mf-vend"><option value="">Select vendor…</option>${gVend().map(v=>`<option value="${v.name||v}" ${f("vendor")===(v.name||v)?"selected":""}>${v.name||v}</option>`).join("")}</select>
+        <select class="fi" id="mf-vend"><option value="">Select vendor…</option>${gVend().map(v=>{const vn=v.name||v;return `<option value="${escAttr(vn)}" ${f("vendor")===vn?"selected":""}>${esc(vn)}</option>`;}).join("")}</select>
         <div style="font-size:11px;color:var(--gold);margin-top:3px;cursor:pointer" onclick="closeModal();renderView('vendors')">+ Add new vendor →</div>
       </div>
-      <div class="f"><label>Industry</label><select class="fi" id="mf-ind"><option value="">Select…</option>${gInd().map(i=>`<option ${f("industry")===i?"selected":""}>${i}</option>`).join("")}</select></div>
-      <div class="f"><label>Meeting Type</label><select class="fi" id="mf-type"><option value="">Select…</option>${TYPES.map(t=>`<option ${f("type")===t?"selected":""}>${t}</option>`).join("")}</select></div>
-      <div class="f"><label>Deal Stage</label><select class="fi" id="mf-stage">${STAGES.map(s=>`<option ${f("stage","Discovery")===s?"selected":""}>${s}</option>`).join("")}</select></div>
-      <div class="f"><label>Priority</label><select class="fi" id="mf-prio">${PRIORITIES.map(p=>`<option ${f("priority","Medium")===p?"selected":""}>${p}</option>`).join("")}</select></div>
-      <div class="f"><label>Outcome</label><select class="fi" id="mf-out"><option value="">Select…</option>${OUTCOMES.map(o=>`<option ${f("outcome")===o?"selected":""}>${o}</option>`).join("")}</select></div>
+      <div class="f"><label>Industry</label><select class="fi" id="mf-ind"><option value="">Select…</option>${gInd().map(i=>`<option value="${escAttr(i)}" ${f("industry")===i?"selected":""}>${esc(i)}</option>`).join("")}</select></div>
+      <div class="f"><label>Meeting Type</label><select class="fi" id="mf-type"><option value="">Select…</option>${TYPES.map(t=>`<option ${f("type")===t?"selected":""}>${esc(t)}</option>`).join("")}</select></div>
+      <div class="f"><label>Deal Stage</label><select class="fi" id="mf-stage">${STAGES.map(s=>`<option ${f("stage","Discovery")===s?"selected":""}>${esc(s)}</option>`).join("")}</select></div>
+      <div class="f"><label>Priority</label><select class="fi" id="mf-prio">${PRIORITIES.map(p=>`<option ${f("priority","Medium")===p?"selected":""}>${esc(p)}</option>`).join("")}</select></div>
+      <div class="f"><label>Outcome</label><select class="fi" id="mf-out"><option value="">Select…</option>${OUTCOMES.map(o=>`<option ${f("outcome")===o?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
       <div class="f"><label>Opportunity Value (OMR)</label>
-        <input class="fi" type="number" id="mf-val" value="${f("value")}" placeholder="e.g. 50000" oninput="document.getElementById('mf-val-usd').textContent=this.value?'≈ '+fUSD(omrUsd(Number(this.value))):''"/>
+        <input class="fi" type="number" id="mf-val" value="${escAttr(f("value"))}" min="0" placeholder="e.g. 50000" oninput="document.getElementById('mf-val-usd').textContent=this.value?'≈ '+fUSD(omrUsd(Number(this.value))):''"/>
         <div id="mf-val-usd" style="font-size:10px;color:var(--dim);margin-top:2px;font-family:'DM Mono',monospace">${f("value")?"≈ "+fUSD(omrUsd(Number(f("value")))):""}</div>
       </div>
-      <div class="f"><label>Margin % (estimated)</label><input class="fi" type="number" id="mf-margin" value="${f("margin","20")}" placeholder="e.g. 25" min="0" max="100"/></div>
-      <div class="f"><label>Meeting Date</label><input class="fi" type="date" id="mf-date" value="${f("date",today())}"/></div>
+      <div class="f"><label>Margin % (estimated)</label><input class="fi" type="number" id="mf-margin" value="${escAttr(f("margin","20"))}" placeholder="e.g. 25" min="0" max="100"/></div>
+      <div class="f"><label>Meeting Date</label><input class="fi" type="date" id="mf-date" value="${escAttr(f("date",today()))}"/></div>
       <div class="f"><label>Duration (mins)</label><select class="fi" id="mf-dur">${[30,45,60,90,120].map(d=>`<option ${f("duration",60)==d?"selected":""}>${d}</option>`).join("")}</select></div>
-      <div class="f"><label>Attendees (client side)</label><input class="fi" type="number" id="mf-att" value="${f("attended",2)}" min="1" max="20"/></div>
+      <div class="f"><label>Attendees (client side)</label><input class="fi" type="number" id="mf-att" value="${escAttr(f("attended",2))}" min="1" max="20"/></div>
       <div class="f"><label>Quality Score (1–5)</label><select class="fi" id="mf-score">${[1,2,3,4,5].map(n=>`<option ${f("score",3)==n?"selected":""}>${n}</option>`).join("")}</select></div>
 
       <div class="f full" style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">
         <div style="font-size:10px;color:var(--gold);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Revenue Attribution %</div>
       </div>
-      <div class="f"><label>Sales %</label><input class="fi" type="number" id="mf-attr-s" value="${f("attr_sales",60)}" min="0" max="100" placeholder="60"/></div>
-      <div class="f"><label>Presales %</label><input class="fi" type="number" id="mf-attr-p" value="${f("attr_presales",20)}" min="0" max="100" placeholder="20"/></div>
-      <div class="f"><label>Vendor %</label><input class="fi" type="number" id="mf-attr-v" value="${f("attr_vendor",15)}" min="0" max="100" placeholder="15"/></div>
-      <div class="f"><label>GSI %</label><input class="fi" type="number" id="mf-attr-g" value="${f("attr_gsi",5)}" min="0" max="100" placeholder="5"/></div>
+      <div class="f"><label>Sales %</label><input class="fi" type="number" id="mf-attr-s" value="${escAttr(f("attr_sales",60))}" min="0" max="100" placeholder="60"/></div>
+      <div class="f"><label>Presales %</label><input class="fi" type="number" id="mf-attr-p" value="${escAttr(f("attr_presales",20))}" min="0" max="100" placeholder="20"/></div>
+      <div class="f"><label>Vendor %</label><input class="fi" type="number" id="mf-attr-v" value="${escAttr(f("attr_vendor",15))}" min="0" max="100" placeholder="15"/></div>
+      <div class="f"><label>GSI %</label><input class="fi" type="number" id="mf-attr-g" value="${escAttr(f("attr_gsi",5))}" min="0" max="100" placeholder="5"/></div>
 
-      <div class="f"><label>GSI Partner (if applicable)</label><select class="fi" id="mf-gsi"><option value="">None</option>${(D.gsi_partners||[]).map(g=>`<option ${f("gsi_partner")===g?"selected":""}>${g}</option>`).join("")}</select></div>
-      <div class="f"><label>Deal Source</label><select class="fi" id="mf-src"><option value="">Select…</option>${["Direct","GSI-led","Vendor-led","Joint","Inbound","Referral"].map(s=>`<option ${f("deal_source")===s?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="f"><label>GSI Partner (if applicable)</label><select class="fi" id="mf-gsi"><option value="">None</option>${(D.gsi_partners||[]).map(g=>`<option value="${escAttr(g)}" ${f("gsi_partner")===g?"selected":""}>${esc(g)}</option>`).join("")}</select></div>
+      <div class="f"><label>Deal Source</label><select class="fi" id="mf-src"><option value="">Select…</option>${["Direct","GSI-led","Vendor-led","Joint","Inbound","Referral"].map(s=>`<option ${f("deal_source")===s?"selected":""}>${esc(s)}</option>`).join("")}</select></div>
       <div class="f"><label>Strategic Deal</label><select class="fi" id="mf-strat"><option value="false" ${!f("strategic_flag")?"selected":""}>No</option><option value="true" ${f("strategic_flag")?"selected":""}>Yes — Strategic</option></select></div>
 
-      <div class="f full"><label>Meeting Notes</label><textarea class="fi" id="mf-notes" rows="3" placeholder="Discussion points, pain points, decisions, sentiment…">${f("notes")}</textarea></div>
-      <div class="f"><label>Next Action</label><input class="fi" id="mf-na" value="${f("nextAction")}" placeholder="e.g. Send proposal"/></div>
-      <div class="f"><label>Next Action Due</label><input class="fi" type="date" id="mf-nd" value="${f("nextDate")}"/></div>
+      <div class="f full"><label>Meeting Notes</label><textarea class="fi" id="mf-notes" rows="3" maxlength="4000" placeholder="Discussion points, pain points, decisions, sentiment…">${esc(f("notes"))}</textarea></div>
+      <div class="f"><label>Next Action</label><input class="fi" id="mf-na" value="${escAttr(f("nextAction"))}" maxlength="240" placeholder="e.g. Send proposal"/></div>
+      <div class="f"><label>Next Action Due</label><input class="fi" type="date" id="mf-nd" value="${escAttr(f("nextDate"))}"/></div>
       <div class="f full" style="display:flex;gap:9px;margin-top:3px">
-        <button class="btn btn-p" style="flex:1" onclick="saveMeeting('${id||""}')">${m?"Save Changes":"Log Meeting"}</button>
+        <button class="btn btn-p" style="flex:1" onclick="saveMeeting('${escAttr(id||"")}')">${m?"Save Changes":"Log Meeting"}</button>
         <button class="btn btn-g" onclick="closeModal()">Cancel</button>
       </div>
     </div>
@@ -1692,16 +1965,16 @@ function viewMeeting(id){
   showModal("Meeting Detail",`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:10px">
       <div>
-        <div style="font-size:19px;font-weight:700;font-family:'Playfair Display',serif;margin-bottom:7px">${m.account}</div>
-        <div style="display:flex;gap:7px;flex-wrap:wrap">${sbadge(m.stage)}<span class="badge" style="background:rgba(75,156,245,.12);color:var(--blue);border:1px solid rgba(75,156,245,.25)">${m.type||"—"}</span>${m.strategic_flag?`<span class="badge" style="background:rgba(200,168,75,.15);color:var(--gold);border:1px solid var(--gold-border)">⭐ Strategic</span>`:""}</div>
+        <div style="font-size:19px;font-weight:700;font-family:'Playfair Display',serif;margin-bottom:7px">${esc(m.account)}</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">${sbadge(m.stage)}<span class="badge" style="background:rgba(75,156,245,.12);color:var(--blue);border:1px solid rgba(75,156,245,.25)">${esc(m.type||"—")}</span>${m.strategic_flag?`<span class="badge" style="background:rgba(200,168,75,.15);color:var(--gold);border:1px solid var(--gold-border)">⭐ Strategic</span>`:""}</div>
       </div>
       <div style="display:flex;gap:7px">
-        ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold)" onclick="closeModal();openMeetingForm('${m.id}')">${iEdit()} Edit</button>`:""}
-        ${CU.role==="admin"?`<button class="btn btn-s btn-d" onclick="delMeeting('${m.id}');closeModal()">${iTrash()} Delete</button>`:""}
+        ${canEdit(m)?`<button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold)" onclick="closeModal();openMeetingForm('${escId(m.id)}')">${iEdit()} Edit</button>`:""}
+        ${CU.role==="admin"?`<button class="btn btn-s btn-d" onclick="delMeeting('${escId(m.id)}');closeModal()">${iTrash()} Delete</button>`:""}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:16px">
-      ${[["Rep",m.repName],["Date",fDate(m.date)],["Duration",`${m.duration}m`],["Vendor",m.vendor||"—"],["Industry",m.industry||"—"],["Source",m.deal_source||"—"],["GSI Partner",m.gsi_partner||"None"],["Attendees",m.attended],["Score",`${m.score}/5`]].map(([k,v])=>`
+      ${[["Rep",esc(m.repName)],["Date",fDate(m.date)],["Duration",`${Number(m.duration)||0}m`],["Vendor",esc(m.vendor||"—")],["Industry",esc(m.industry||"—")],["Source",esc(m.deal_source||"—")],["GSI Partner",esc(m.gsi_partner||"None")],["Attendees",Number(m.attended)||0],["Score",`${Number(m.score)||0}/5`]].map(([k,v])=>`
         <div style="background:rgba(255,255,255,.03);border-radius:8px;padding:9px 12px">
           <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:2px">${k}</div>
           <div style="font-size:12px;color:var(--text);font-weight:500">${v}</div>
@@ -1725,8 +1998,8 @@ function viewMeeting(id){
         ${[["Sales",m.attr_sales||60,"var(--gold)"],["Presales",m.attr_presales||20,"var(--blue)"],["Vendor",m.attr_vendor||15,"var(--purple)"],["GSI",m.attr_gsi||5,"var(--green)"]].map(([l,v,c])=>`<div style="text-align:center"><div style="font-size:16px;font-weight:700;color:${c};font-family:'Playfair Display',serif">${v}%</div><div style="font-size:10px;color:var(--dim)">${l}</div></div>`).join("")}
       </div>
     </div>
-    ${m.notes?`<div style="background:rgba(255,255,255,.03);border-radius:9px;padding:12px;margin-bottom:12px"><div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Notes</div><div style="font-size:13px;color:var(--muted);line-height:1.6">${m.notes}</div></div>`:""}
-    ${m.nextAction?`<div style="background:var(--gold-dim);border:1px solid var(--gold-border);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Next Action</div><div style="font-size:13px;color:var(--text);font-weight:500">${m.nextAction}</div><div style="font-size:11px;color:var(--muted);margin-top:3px">Due: ${fDate(m.nextDate)}${ov?` <span style="color:var(--red);font-weight:600">· OVERDUE</span>`:""}</div></div>`:""}
+    ${m.notes?`<div style="background:rgba(255,255,255,.03);border-radius:9px;padding:12px;margin-bottom:12px"><div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Notes</div><div style="font-size:13px;color:var(--muted);line-height:1.6;white-space:pre-wrap">${esc(m.notes)}</div></div>`:""}
+    ${m.nextAction?`<div style="background:var(--gold-dim);border:1px solid var(--gold-border);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace;margin-bottom:5px">Next Action</div><div style="font-size:13px;color:var(--text);font-weight:500">${esc(m.nextAction)}</div><div style="font-size:11px;color:var(--muted);margin-top:3px">Due: ${fDate(m.nextDate)}${ov?` <span style="color:var(--red);font-weight:600">· OVERDUE</span>`:""}</div></div>`:""}
   `,true);
 }
 
@@ -1885,9 +2158,6 @@ const iEye  =()=>svg(`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><c
 const iAdmin=()=>svg(`<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/>`,18);
 const iDown =()=>svg(`<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/>`,18);
 
-
-const iAdmin=()=>svg(`<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/>`,18);
-
 // ═══════════════════════════════════════════════════
 // ADMIN CONTROL PANEL
 // ═══════════════════════════════════════════════════
@@ -1931,12 +2201,12 @@ function rAdmin(){
           ${D.meetings.slice(0,30).map(m=>`
             <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
               <div style="min-width:0;flex:1">
-                <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.account} · ${m.vendor||"—"}</div>
-                <div style="font-size:10px;color:var(--dim)">${m.date} · ${m.stage} · ${fOMR(m.value)}</div>
+                <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.account)} · ${esc(m.vendor||"—")}</div>
+                <div style="font-size:10px;color:var(--dim)">${esc(m.date)} · ${esc(m.stage)} · ${fOMR(m.value)}</div>
               </div>
               <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
-                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${m.id}')">${iEdit()}</button>
-                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelMeeting('${m.id}')">${iTrash()}</button>
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openMeetingForm('${escId(m.id)}')">${iEdit()}</button>
+                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelMeeting('${escId(m.id)}')">${iTrash()}</button>
               </div>
             </div>`).join("")}
           ${D.meetings.length>30?`<div style="font-size:11px;color:var(--dim);padding:8px 0;text-align:center">+ ${D.meetings.length-30} more — use Meetings view for full list</div>`:""}
@@ -1954,12 +2224,12 @@ function rAdmin(){
           ${D.customers.map(c=>`
             <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
               <div style="min-width:0;flex:1">
-                <div style="font-size:12px;color:var(--text);font-weight:500">${c.name}</div>
-                <div style="font-size:10px;color:var(--dim)">${c.industry||"—"} · ${c.focalName||"No focal point"}</div>
+                <div style="font-size:12px;color:var(--text);font-weight:500">${esc(c.name)}</div>
+                <div style="font-size:10px;color:var(--dim)">${esc(c.industry||"—")} · ${esc(c.focalName||"No focal point")}</div>
               </div>
               <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
-                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openCustForm('${c.id}')">${iEdit()}</button>
-                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelCust('${c.id}')">${iTrash()}</button>
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openCustForm('${escId(c.id)}')">${iEdit()}</button>
+                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelCust('${escId(c.id)}')">${iTrash()}</button>
               </div>
             </div>`).join("")}
           ${D.customers.length===0?`<div style="font-size:13px;color:var(--dim);padding:16px 0">No customers yet</div>`:""}
@@ -1976,12 +2246,12 @@ function rAdmin(){
           ${D.vendors.map(v=>`
             <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
               <div style="min-width:0;flex:1">
-                <div style="font-size:12px;color:var(--text);font-weight:500">${v.name}</div>
-                <div style="font-size:10px;color:var(--dim)">${v.category||"—"} · ${v.contact||"No contact"}</div>
+                <div style="font-size:12px;color:var(--text);font-weight:500">${esc(v.name)}</div>
+                <div style="font-size:10px;color:var(--dim)">${esc(v.category||"—")} · ${esc(v.contact||"No contact")}</div>
               </div>
               <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
-                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openVendForm('${v.id}')">${iEdit()}</button>
-                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelVend('${v.id}')">${iTrash()}</button>
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openVendForm('${escId(v.id)}')">${iEdit()}</button>
+                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="adminDelVend('${escId(v.id)}')">${iTrash()}</button>
               </div>
             </div>`).join("")}
           ${D.vendors.length===0?`<div style="font-size:13px;color:var(--dim);padding:16px 0">No custom vendors — defaults active</div>`:""}
@@ -1998,15 +2268,15 @@ function rAdmin(){
           ${D.users.map(u=>`
             <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
               <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
-                <div class="av" style="width:26px;height:26px;background:linear-gradient(135deg,${ROLE_C[u.role]||"#888"},#1a3a6e);font-size:10px;color:#fff;flex-shrink:0">${(u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
+                <div class="av" style="width:26px;height:26px;background:linear-gradient(135deg,${ROLE_C[u.role]||"#888"},#1a3a6e);font-size:10px;color:#fff;flex-shrink:0">${esc((u.name||"U").split(" ").map(n=>n[0]).join("").slice(0,2))}</div>
                 <div style="min-width:0">
-                  <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</div>
-                  <div style="font-size:10px;color:var(--dim)">${u.role} · ${u.email.split("@")[0]}</div>
+                  <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.name)}</div>
+                  <div style="font-size:10px;color:var(--dim)">${esc(u.role)} · ${esc((u.email||"").split("@")[0])}</div>
                 </div>
               </div>
               <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
-                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openUserForm('${u.id}')">${iEdit()}</button>
-                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delUser('${u.id}')">${iTrash()}</button>
+                <button class="btn btn-s" style="background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);padding:3px 7px" onclick="openUserForm('${escId(u.id)}')">${iEdit()}</button>
+                <button class="btn btn-s btn-d" style="padding:3px 7px" onclick="delUser('${escId(u.id)}')">${iTrash()}</button>
               </div>
             </div>`).join("")}
         </div>
@@ -2019,12 +2289,17 @@ function rAdmin(){
       <!-- ROLE MAP EDITOR -->
       <div class="card">
         <div class="stitle">Role Assignment by Email</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Users who sign in with these emails get admin role automatically.</div>
-        ${Object.entries(D.admin_emails||{"anm@majants.onmicrosoft.com":"admin","aryantale@majants.onmicrosoft.com":"admin"}).map(([email,role])=>`
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:6px">
-            <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${email}</span>
-            ${rbadge(role)}
-          </div>`).join("")}
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">When a user signs in with one of these emails, they are auto-assigned the matching role. Roles are stored in OneDrive (<code style="font-family:'DM Mono',monospace;color:var(--gold)">${esc(FILE_NAME)}</code>) and apply across all sessions.</div>
+        ${Object.entries(D.role_map||{}).length===0
+          ? `<div style="font-size:12px;color:var(--dim);padding:8px 0">No rules defined. Bootstrap admins (${BOOTSTRAP_ADMINS.map(e=>esc(e)).join(", ")}) are seeded on first sign-in.</div>`
+          : Object.entries(D.role_map).map(([email,role])=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:6px">
+                <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(email)}</span>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                  ${rbadge(role)}
+                  <button class="btn btn-s btn-d" style="padding:2px 7px" onclick="removeRoleRule('${escAttr(email)}')" title="Remove rule">${iTrash()}</button>
+                </div>
+              </div>`).join("")}
         <button class="btn btn-g btn-s" style="width:100%;margin-top:8px;justify-content:center" onclick="openRoleMapEditor()">+ Add Email Rule</button>
       </div>
 
@@ -2034,8 +2309,8 @@ function rAdmin(){
         <div style="max-height:180px;overflow-y:auto;margin-bottom:10px">
           ${(D.gsi_partners||[]).map(g=>`
             <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(255,255,255,.03);border-radius:7px;margin-bottom:5px">
-              <span style="font-size:12px;color:var(--text)">${g}</span>
-              <button class="btn btn-s btn-d" style="padding:2px 7px" onclick="removeGSI('${g}')">${iTrash()}</button>
+              <span style="font-size:12px;color:var(--text)">${esc(g)}</span>
+              <button class="btn btn-s btn-d" style="padding:2px 7px" onclick="removeGSI('${escAttr(g)}')">${iTrash()}</button>
             </div>`).join("")}
         </div>
         <div style="display:flex;gap:7px">
@@ -2054,13 +2329,13 @@ function rAdmin(){
           ${(D.incentive_rules||[]).map(r=>`
             <div style="padding:9px 10px;background:rgba(200,168,75,.06);border:1px solid var(--gold-border);border-radius:8px;margin-bottom:7px">
               <div style="display:flex;justify-content:space-between;margin-bottom:2px">
-                <span style="font-size:12px;font-weight:600;color:var(--gold)">${r.name}</span>
+                <span style="font-size:12px;font-weight:600;color:var(--gold)">${esc(r.name)}</span>
                 <div style="display:flex;gap:4px">
-                  <span style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace">${r.value}%</span>
-                  <button class="btn btn-s btn-d" style="padding:2px 6px" onclick="delRule('${r.id}')">${iTrash()}</button>
+                  <span style="font-size:11px;color:var(--gold);font-family:'DM Mono',monospace">${Number(r.value)||0}%</span>
+                  <button class="btn btn-s btn-d" style="padding:2px 6px" onclick="delRule('${escId(r.id)}')">${iTrash()}</button>
                 </div>
               </div>
-              <div style="font-size:10px;color:var(--dim)">${r.description}</div>
+              <div style="font-size:10px;color:var(--dim)">${esc(r.description)}</div>
             </div>`).join("")}
         </div>
       </div>
@@ -2075,12 +2350,12 @@ function rAdmin(){
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
         ${D.users.filter(u=>u.role==="rep"||u.role==="presales").map(u=>`
           <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px">
-            <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:3px">${u.name.split(" ")[0]}</div>
+            <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:3px">${esc((u.name||"").split(" ")[0])}</div>
             <div style="font-size:10px;color:var(--dim);margin-bottom:8px">${rbadge(u.role)}</div>
             <label style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;display:block;margin-bottom:4px">MONTHLY TARGET (OMR)</label>
-            <input class="fi" type="number" id="target-${u.id}" value="${u.target_monthly||50000}" style="font-size:12px;padding:7px 10px"/>
+            <input class="fi" type="number" id="target-${escId(u.id)}" value="${escAttr(u.target_monthly||50000)}" min="0" style="font-size:12px;padding:7px 10px"/>
             <label style="font-size:10px;color:var(--dim);font-family:'DM Mono',monospace;display:block;margin-top:6px;margin-bottom:4px">COMMISSION %</label>
-            <input class="fi" type="number" id="comm-${u.id}" value="${u.commission_rate||3}" step="0.5" style="font-size:12px;padding:7px 10px"/>
+            <input class="fi" type="number" id="comm-${escId(u.id)}" value="${escAttr(u.commission_rate||3)}" step="0.5" min="0" max="100" style="font-size:12px;padding:7px 10px"/>
           </div>`).join("")}
         ${D.users.filter(u=>u.role==="rep"||u.role==="presales").length===0?`<div style="grid-column:span 3;color:var(--dim);font-size:13px">No reps yet — add users first</div>`:""}
       </div>
@@ -2195,12 +2470,27 @@ function openRoleMapEditor(){
 }
 
 async function saveRoleMap(){
-  const email=document.getElementById("rm-email")?.value?.trim().toLowerCase();
-  const role=document.getElementById("rm-role")?.value;
-  if(!email){toast("Email required","error");return;}
-  if(!D.admin_emails)D.admin_emails={};
-  D.admin_emails[email]=role;
+  const email = document.getElementById("rm-email")?.value?.trim().toLowerCase();
+  const role  = document.getElementById("rm-role")?.value;
+  if(!email){ toast("Email required","error"); return; }
+  // Basic email shape check — Azure AD emails always include "@".
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Invalid email format","error"); return; }
+  if(!["admin","manager","rep","presales"].includes(role)){ toast("Invalid role","error"); return; }
+  if(!D.role_map || typeof D.role_map !== "object") D.role_map = {};
+  D.role_map[email] = role;
+  // Mirror the change onto the user record if one exists, so the change takes effect
+  // without forcing the user to sign out / sign back in.
+  D.users = (D.users||[]).map(u => u.email === email ? { ...u, role } : u);
   await saveData(); closeModal(); toast("Role rule saved"); rAdmin();
+}
+
+async function removeRoleRule(email){
+  if(!email) return;
+  if(!confirm(`Remove role rule for ${email}?`)) return;
+  if(D.role_map && Object.prototype.hasOwnProperty.call(D.role_map, email)){
+    delete D.role_map[email];
+    await saveData(); toast("Role rule removed"); rAdmin();
+  }
 }
 
 // DATA EXPORT / IMPORT
@@ -2214,20 +2504,42 @@ function exportData(){
 }
 
 async function importData(input){
-  const file=input.files[0]; if(!file)return;
-  const reader=new FileReader();
-  reader.onload=async(e)=>{
+  const file = input.files[0]; if(!file) return;
+  // Cap file size to ~10 MB to prevent OOM/DoS via massive paste.
+  if(file.size > 10 * 1024 * 1024){ toast("File too large (>10MB)","error"); return; }
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
     try{
-      const imported=JSON.parse(e.target.result);
-      if(!confirm(`Import ${imported.meetings?.length||0} meetings, ${imported.customers?.length||0} customers, ${imported.users?.length||0} users? This will MERGE with existing data.`))return;
-      // Merge — add non-duplicate records
-      if(imported.meetings)imported.meetings.forEach(m=>{if(!D.meetings.find(x=>x.id===m.id))D.meetings.push(m);});
-      if(imported.customers)imported.customers.forEach(c=>{if(!D.customers.find(x=>x.id===c.id))D.customers.push(c);});
-      if(imported.vendors)imported.vendors.forEach(v=>{if(!D.vendors.find(x=>x.id===v.id))D.vendors.push(v);});
-      if(imported.users)imported.users.forEach(u=>{if(!D.users.find(x=>x.id===u.id))D.users.push(u);});
-      await saveData(); toast(`Imported successfully ✓`); rAdmin();
-    }catch(err){toast("Invalid file format","error");}
+      const raw = JSON.parse(e.target.result);
+      if(!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not-object");
+
+      // Defensive deep copy through JSON to strip __proto__/constructor/etc.
+      const imported = JSON.parse(JSON.stringify(raw));
+
+      // Coerce only the keys we know about — never blindly merge unknown keys.
+      const safeArr = (v) => Array.isArray(v) ? v : [];
+      const m_in = safeArr(imported.meetings);
+      const c_in = safeArr(imported.customers);
+      const v_in = safeArr(imported.vendors);
+      const u_in = safeArr(imported.users);
+
+      if(!confirm(`Import ${m_in.length} meetings, ${c_in.length} customers, ${u_in.length} users, ${v_in.length} vendors? This will MERGE with existing data.`)) return;
+
+      m_in.forEach(m => { if(m && m.id && !D.meetings.find(x=>x.id===m.id)) D.meetings.push(m); });
+      c_in.forEach(c => { if(c && c.id && !D.customers.find(x=>x.id===c.id)) D.customers.push(c); });
+      v_in.forEach(v => { if(v && v.id && !D.vendors.find(x=>x.id===v.id))   D.vendors.push(v); });
+      u_in.forEach(u => { if(u && u.id && u.email && !D.users.find(x=>x.id===u.id || x.email===u.email)) D.users.push(u); });
+
+      await saveData();
+      toast(`Imported successfully ✓`);
+      rAdmin();
+    }catch(err){
+      console.error("[importData]", err);
+      toast("Invalid file format","error");
+    }
   };
+  reader.onerror = () => toast("Could not read file","error");
   reader.readAsText(file);
 }
 
@@ -2262,13 +2574,35 @@ async function forceSync(){
 // BOOT
 // ═══════════════════════════════════════════════════
 (async()=>{
-  await msalApp.initialize();
+  if(!msalApp){
+    showLoginError(window.__MSAL_INIT_ERROR__ || "Authentication service failed to initialise.");
+    return;
+  }
+  // initialize() is required from MSAL Browser v3.x onward; on v2 it does not exist.
+  // Tolerate either by guarding the call.
   try{
-    const r=await msalApp.handleRedirectPromise();
-    if(r&&r.account){await initUser(r.account);return;}
-  }catch(e){console.error(e);}
-  const accs=msalApp.getAllAccounts();
-  if(accs.length>0){try{await initUser(accs[0]);}catch(e){console.error(e);}}
+    if(typeof msalApp.initialize === "function"){
+      await msalApp.initialize();
+    }
+  }catch(e){
+    console.error("[msal initialize]", e);
+    showLoginError("Sign-in setup failed. Try refreshing the page.");
+    return;
+  }
+
+  try{
+    const r = await msalApp.handleRedirectPromise();
+    if(r && r.account){ await initUser(r.account); return; }
+  }catch(e){
+    console.error("[handleRedirectPromise]", e);
+    showLoginError(e?.errorMessage || e?.message || "Sign-in callback failed.");
+  }
+
+  const accs = msalApp.getAllAccounts();
+  if(accs.length > 0){
+    try{ await initUser(accs[0]); }
+    catch(e){ console.error("[silent resume]", e); showLoginError("Could not resume your session — please sign in again."); }
+  }
 })();
 </script>
 </body>
